@@ -1,9 +1,9 @@
 #!/bin/sh
 # Startet den Rust-Kern (engine-rs) als UCI-Engine; baut ihn bei Bedarf.
-# Gewichte: weights.bin (python export_rs.py). Fehler und Build-Ausgaben landen in uci-rs.log.
+# Gewichte: weights/weights.bin (python export_rs.py). Fehler und Build-Ausgaben landen in logs/uci-rs.log.
 DIR="$(cd "$(dirname "$0")" && pwd)"
 BIN="$DIR/engine-rs/target/release/wsp-chess"
-LOG="$DIR/uci-rs.log"
+LOG="$DIR/logs/uci-rs.log"
 if [ ! -x "$BIN" ]; then
   CARGO="$(command -v cargo 2>/dev/null)"
   [ -x "$CARGO" ] || CARGO=/opt/homebrew/bin/cargo

@@ -9,7 +9,7 @@ use wsp_chess::search::{self, see};
 use wsp_chess::uci::perft;
 
 fn net() -> Net {
-    Net::load("../weights.bin").unwrap()
+    Net::load("../weights/weights.bin").unwrap()
 }
 
 fn pos(fen: &str) -> Chess {
@@ -23,7 +23,7 @@ fn pos(fen: &str) -> Chess {
 fn eval_matches_python() {
     let net = net();
     let check: Value =
-        serde_json::from_str(&std::fs::read_to_string("../weights_check.json").unwrap()).unwrap();
+        serde_json::from_str(&std::fs::read_to_string("../weights/weights_check.json").unwrap()).unwrap();
     let mut worst: f64 = 0.0;
     for p in check["positions"].as_array().unwrap() {
         let s = f64::from(net.score(&pos(p["fen"].as_str().unwrap())));
@@ -81,7 +81,7 @@ fn perft_reference() {
 
 #[test]
 fn rejects_corrupt_weights() {
-    let mut b = std::fs::read("../weights.bin").unwrap();
+    let mut b = std::fs::read("../weights/weights.bin").unwrap();
     assert!(Net::from_bytes(&b[..b.len() - 1]).is_err());
     b[0] = b'X';
     assert!(Net::from_bytes(&b).is_err());

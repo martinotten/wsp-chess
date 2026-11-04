@@ -45,17 +45,17 @@ fn send(out: &Out, line: &str) {
     let _ = o.flush();
 }
 
-/// Gewichtsdatei neben dem Projekt: `engine-rs/target/release/wsp-chess` -> `chess/weights.bin`.
+/// Gewichtsdatei im Projekt: `engine-rs/target/release/wsp-chess` -> `chess/weights/weights.bin`.
 fn default_weights() -> String {
     let mut p: PathBuf = std::env::current_exe().unwrap_or_default();
     for _ in 0..4 {
         p.pop();
-        let c = p.join("weights.bin");
+        let c = p.join("weights").join("weights.bin");
         if c.exists() {
             return c.to_string_lossy().into_owned();
         }
     }
-    "weights.bin".into()
+    "weights/weights.bin".into()
 }
 
 /// Liest eine Stellung aus FEN und optionaler Zugfolge.

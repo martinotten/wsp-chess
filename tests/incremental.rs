@@ -8,7 +8,7 @@ use wsp_chess::search::{Limits, Searcher};
 
 #[test]
 fn incremental_equals_refresh() {
-    let net = Arc::new(Net::load("../weights.bin").unwrap());
+    let net = Arc::new(Net::load("../weights/weights.bin").unwrap());
     let mut s = Searcher::new(net, 16, Arc::new(AtomicBool::new(false)));
     s.check_incremental = Some(0.0);
     for fen in [

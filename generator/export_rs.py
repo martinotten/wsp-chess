@@ -1,6 +1,6 @@
 """Export des Handnetzes für den Rust-Kern (engine-rs).
 
-    python export_rs.py [--disable gruppe ...] [--out weights.bin]
+    python export_rs.py [--disable gruppe ...] [--out weights/weights.bin]
 
 Grundlage ist build(alpha=0, n_free=0): reines ReLU, ohne freie Neuronen. Wegen der exakten Leck-Kompensation
 ist das dieselbe Funktion wie das Leaky-Netz in weights.npz (Abweichung ~1e-4 Bauern); freie Neuronen speisen nur
@@ -14,7 +14,7 @@ Format (Little-Endian):
   f32[nnz]         Gewicht
 Eine Quelle wirkt nur auf spätere Schichten (dichte Skip-Verbindungen).
 
-Außerdem weights_check.json: Sollwerte s (Bauern, vor tanh) für Teststellungen und Zugfolgen mit Sonderzügen.
+Außerdem weights/weights_check.json: Sollwerte s (Bauern, vor tanh) für Teststellungen und Zugfolgen mit Sonderzügen.
 """
 import argparse
 import json
@@ -24,6 +24,7 @@ import chess
 import numpy as np
 import torch
 
+import paths
 from build_weights import build
 from features import encode_many
 from net import ChessNet, load
@@ -88,7 +89,7 @@ SEQUENCES = [  # (Start-FEN, Züge): Rochaden, en passant, Schlagumwandlung, Unt
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--disable", nargs="*", default=[])
-    ap.add_argument("--out", default="weights.bin")
+    ap.add_argument("--out", default=paths.weights("weights.bin"))
     ap.add_argument("--scale", nargs="*", default=[], help="Gruppe=Faktor, z. B. king_safety=3")
     ap.add_argument("--extra", nargs="*", default=[], help="Zusatzbausteine, z. B. king_danger")
     a = ap.parse_args()
@@ -112,7 +113,7 @@ def main():
         x = torch.from_numpy(encode_many([chess.Board(f) for f in allf]))
         s0 = ref.score(x).numpy()
         if not a.disable:                                        # Dreiwegeprüfung: Leaky-Artefakt
-            s1 = load("weights.npz").eval().score(x).numpy()
+            s1 = load(paths.weights("weights.npz")).eval().score(x).numpy()
             print(f"ReLU-Export vs. weights.npz (leaky): max |Δs| = {np.abs(s0 - s1).max():.2e}")
     vals = dict(zip(allf, map(float, s0)))
     check = {"positions": [{"fen": f, "s": vals[f]} for f in fens],

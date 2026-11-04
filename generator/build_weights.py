@@ -32,6 +32,7 @@ Bewertung anfangs nicht, bekommen aber Gradienten).
 """
 import numpy as np
 
+import paths
 from features import xi, P, N, B, R, Q, K, OWN, OPP, NAMES
 
 LEAKY = 0.01
@@ -401,12 +402,12 @@ if __name__ == "__main__":
     t0 = time.time()
     if sys.argv[1:] == ["search"]:          # Gewichte für die Engine mit Suche
         params, meta = build(disable=SEARCH_DISABLE)
-        np.savez_compressed("weights_search.npz", **params)
+        np.savez_compressed(paths.weights("weights_search.npz"), **params)
         print(f"weights_search.npz ohne {SEARCH_DISABLE}, {time.time() - t0:.1f} s")
         sys.exit()
     params, meta = build()
-    np.savez_compressed("weights.npz", **params)
-    with open("units.json", "w") as fh:
+    np.savez_compressed(paths.weights("weights.npz"), **params)
+    with open(paths.weights("units.json"), "w") as fh:
         json.dump(meta, fh)
     total = sum(v.size for v in params.values())
     nz = sum(int((v != 0).sum()) for k, v in params.items())
