@@ -89,3 +89,31 @@ fn qchecks_is_opt_in() {
     let out = session("setoption name QChecks value true\nposition startpos\ngo depth 5\nisready\n");
     assert_eq!(bestmove(&out).len(), 4, "{out}");
 }
+
+#[test]
+fn auxiliary_commands() {
+    let out = session(
+        "position startpos\neval\nperft 3\nbench 2\nsetoption name Hash value 8\nucinewgame\nisready\n",
+    );
+    assert!(out.contains("info string eval "), "{out}");
+    assert!(out.contains("info string perft 3 8902 "), "{out}");
+    assert!(out.contains("info string bench depth 2 nodes "), "{out}");
+    assert!(out.contains("readyok"), "{out}");
+}
+
+#[test]
+fn invalid_input_is_reported_and_quit_ends_the_session() {
+    let out = session("setoption name Unbekannt value 1\nposition startpos moves e2e5\nquit\nisready\n");
+    assert!(out.contains("info string unbekannte Option Unbekannt"), "{out}");
+    assert!(out.contains("info string ungültige Stellung"), "{out}");
+    assert!(!out.contains("readyok"), "nach quit keine Antwort mehr: {out}");
+}
+
+#[test]
+fn missing_weights_are_reported() {
+    let out = session("setoption name Weights value /gibt/es/nicht.bin\nisready\n");
+    assert!(
+        out.contains("info string Fehler: Gewichtsdatei nicht lesbar"),
+        "{out}"
+    );
+}

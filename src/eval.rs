@@ -14,6 +14,8 @@ use std::fmt;
 pub const N_INPUTS: usize = 768;
 const MAGIC: &[u8; 4] = b"WSPN";
 const VERSION: u32 = 1;
+/// Höchstzahl geänderter Merkmale, bis zu der [`Net::update`] nachführt statt neu zu berechnen.
+pub const MAX_CHANGES: usize = 12;
 
 /// Fehler beim Laden der Gewichtsdatei.
 #[derive(Debug)]
@@ -219,14 +221,14 @@ impl Net {
     }
 
     /// Führt den Akkumulator `acc` (Perspektive `persp`) von Brett `from` auf Brett `to` nach.
-    /// Gibt `false` zurück (ohne Änderung), wenn sich mehr als `max` Figuren unterscheiden.
+    /// Gibt `false` zurück (ohne Änderung), wenn sich mehr als [`MAX_CHANGES`] Merkmale unterscheiden;
+    /// dann ist eine Neuberechnung mit [`Net::refresh`] billiger. `buf` ist Arbeitsspeicher.
     pub fn update(
         &self,
         from: &Board,
         to: &Board,
         persp: Color,
         acc: &mut [f32],
-        max: usize,
         buf: &mut Vec<(usize, f32)>,
     ) -> bool {
         buf.clear();
@@ -236,7 +238,7 @@ impl Net {
                 let (a, b) = (from.by_piece(piece), to.by_piece(piece));
                 buf.extend((a & !b).into_iter().map(|sq| (feature(persp, piece, sq), -1.0)));
                 buf.extend((b & !a).into_iter().map(|sq| (feature(persp, piece, sq), 1.0)));
-                if buf.len() > max {
+                if buf.len() > MAX_CHANGES {
                     return false;
                 }
             }

@@ -2,3 +2,8 @@ allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 allow-panic-in-tests = true
 allow-print-in-tests = true
+
+# Lesbarkeit: Grenzen für Komplexität, Länge und Parameter je Funktion (check.sh bricht bei Überschreitung ab)
+cognitive-complexity-threshold = 15
+too-many-lines-threshold = 60
+too-many-arguments-threshold = 6

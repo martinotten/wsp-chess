@@ -29,7 +29,8 @@ pub struct Entry {
     pub depth: i32,
     /// Art der Schranke.
     pub bound: Bound,
-    age: u8,
+    /// Suchgeneration; setzt [`Tt::store`].
+    pub(crate) age: u8,
 }
 
 /// Transpositionstabelle fester Größe (Zweierpotenz).
@@ -77,21 +78,14 @@ impl Tt {
 
     /// Speichert einen Eintrag. Ersetzt wird ein leerer, gleicher, veralteter oder flacherer Eintrag;
     /// ohne neuen Zug bleibt der alte Zug derselben Stellung erhalten.
-    pub fn store(&mut self, key: u64, mv: u16, score: i32, eval: Option<i32>, depth: i32, bound: Bound) {
+    pub fn store(&mut self, new: Entry) {
         let age = self.age;
-        let i = self.idx(key);
+        let i = self.idx(new.key);
         let e = &mut self.slots[i];
-        if e.bound == Bound::None || e.key == key || e.age != age || depth >= e.depth {
-            let mv = if mv == 0 && e.key == key { e.mv } else { mv };
-            *e = Entry {
-                key,
-                mv,
-                score,
-                eval,
-                depth,
-                bound,
-                age,
-            };
+        let same = e.key == new.key;
+        if e.bound == Bound::None || same || e.age != age || new.depth >= e.depth {
+            let mv = if new.mv == 0 && same { e.mv } else { new.mv };
+            *e = Entry { mv, age, ..new };
         }
     }
 

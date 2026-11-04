@@ -5,7 +5,8 @@ use shakmaty::fen::Fen;
 use shakmaty::uci::UciMove;
 use shakmaty::{CastlingMode, Chess, Position};
 use wsp_chess::eval::Net;
-use wsp_chess::search::{self, see};
+use wsp_chess::exchange::see;
+use wsp_chess::search;
 use wsp_chess::uci::perft;
 
 fn net() -> Net {
