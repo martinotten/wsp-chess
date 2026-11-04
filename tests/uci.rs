@@ -9,9 +9,9 @@ use wsp_chess::uci::{parse_go, parse_position, run, score_str};
 struct Buf(Arc<Mutex<Vec<u8>>>);
 
 impl Write for Buf {
-    fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(b);
-        Ok(b.len())
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
     }
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
@@ -30,7 +30,7 @@ fn session(input: &str) -> String {
 fn bestmove(out: &str) -> &str {
     out.lines()
         .rev()
-        .find_map(|l| l.strip_prefix("bestmove "))
+        .find_map(|line| line.strip_prefix("bestmove "))
         .unwrap()
 }
 
@@ -62,8 +62,8 @@ fn stop_ends_infinite_search() {
 #[test]
 fn time_management() {
     use shakmaty::Color;
-    let l = parse_go(&["movetime", "100"], Color::White);
-    assert_eq!(l.movetime.unwrap().as_millis(), 95);
+    let limits = parse_go(&["movetime", "100"], Color::White);
+    assert_eq!(limits.movetime.unwrap().as_millis(), 95);
     let clock = parse_go(&["wtime", "60000", "btime", "1000", "winc", "0"], Color::Black);
     assert!(clock.movetime.unwrap().as_millis() <= 1000 / 3);
     assert!(parse_go(&["infinite"], Color::White).infinite);

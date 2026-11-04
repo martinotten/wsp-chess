@@ -26,27 +26,31 @@ fn eval_matches_python() {
     let check: Value =
         serde_json::from_str(&std::fs::read_to_string("../weights/weights_check.json").unwrap()).unwrap();
     let mut worst: f64 = 0.0;
-    for p in check["positions"].as_array().unwrap() {
-        let s = f64::from(net.score(&pos(p["fen"].as_str().unwrap())));
-        worst = worst.max((s - p["s"].as_f64().unwrap()).abs());
+    for position in check["positions"].as_array().unwrap() {
+        let score = f64::from(net.score(&pos(position["fen"].as_str().unwrap())));
+        worst = worst.max((score - position["s"].as_f64().unwrap()).abs());
     }
     // Zugfolgen mit Sonderzügen: Stellungen durch Ziehen erzeugen (nicht aus FEN)
-    for sq in check["sequences"].as_array().unwrap() {
-        let mut p = pos(sq["fen"].as_str().unwrap());
-        let soll: Vec<f64> = sq["s"]
+    for sequence in check["sequences"].as_array().unwrap() {
+        let mut position = pos(sequence["fen"].as_str().unwrap());
+        let soll: Vec<f64> = sequence["s"]
             .as_array()
             .unwrap()
             .iter()
-            .map(|v| v.as_f64().unwrap())
+            .map(|value| value.as_f64().unwrap())
             .collect();
-        worst = worst.max((f64::from(net.score(&p)) - soll[0]).abs());
-        for (k, m) in sq["moves"].as_array().unwrap().iter().enumerate() {
-            let u: UciMove = m.as_str().unwrap().parse().unwrap();
-            let mv = u.to_move(&p).unwrap();
-            p.play_unchecked(mv);
-            let d = (f64::from(net.score(&p)) - soll[k + 1]).abs();
-            assert!(d < 1e-3, "Folge {} Zug {k}: |Δs| = {d}", sq["fen"]);
-            worst = worst.max(d);
+        worst = worst.max((f64::from(net.score(&position)) - soll[0]).abs());
+        for (ply, uci_text) in sequence["moves"].as_array().unwrap().iter().enumerate() {
+            let uci_move: UciMove = uci_text.as_str().unwrap().parse().unwrap();
+            let mv = uci_move.to_move(&position).unwrap();
+            position.play_unchecked(mv);
+            let deviation = (f64::from(net.score(&position)) - soll[ply + 1]).abs();
+            assert!(
+                deviation < 1e-3,
+                "Folge {} Zug {ply}: |Δs| = {deviation}",
+                sequence["fen"]
+            );
+            worst = worst.max(deviation);
         }
     }
     println!("max |Δs| = {worst:e}");
@@ -56,21 +60,21 @@ fn eval_matches_python() {
 #[test]
 fn see_values() {
     // Bauer schlägt gedeckten Springer: +300 - 100 = +200 (Springer wird geschlagen, Bauer zurück)
-    let p = pos("4k3/8/2p5/3n4/4P3/8/8/4K3 w - - 0 1");
-    let m = p
+    let position = pos("4k3/8/2p5/3n4/4P3/8/8/4K3 w - - 0 1");
+    let pawn_capture = position
         .legal_moves()
         .into_iter()
-        .find(|mv| search::uci(*mv) == "e4d5")
+        .find(|candidate| search::uci(*candidate) == "e4d5")
         .unwrap();
-    assert_eq!(see(&p, m), 200);
+    assert_eq!(see(&position, pawn_capture), 200);
     // Dame schlägt von Bauer gedeckten Bauern: 100 - 900 = -800
-    let q = pos("4k3/8/2p5/3p4/8/8/3Q4/4K3 w - - 0 1");
-    let qm = q
+    let other_position = pos("4k3/8/2p5/3p4/8/8/3Q4/4K3 w - - 0 1");
+    let queen_capture = other_position
         .legal_moves()
         .into_iter()
-        .find(|mv| search::uci(*mv) == "d2d5")
+        .find(|candidate| search::uci(*candidate) == "d2d5")
         .unwrap();
-    assert_eq!(see(&q, qm), -800);
+    assert_eq!(see(&other_position, queen_capture), -800);
 }
 
 #[test]
@@ -82,8 +86,8 @@ fn perft_reference() {
 
 #[test]
 fn rejects_corrupt_weights() {
-    let mut b = std::fs::read("../weights/weights.bin").unwrap();
-    assert!(Net::from_bytes(&b[..b.len() - 1]).is_err());
-    b[0] = b'X';
-    assert!(Net::from_bytes(&b).is_err());
+    let mut bytes = std::fs::read("../weights/weights.bin").unwrap();
+    assert!(Net::from_bytes(&bytes[..bytes.len() - 1]).is_err());
+    bytes[0] = b'X';
+    assert!(Net::from_bytes(&bytes).is_err());
 }

@@ -34,25 +34,25 @@ pub const BENCH: [&str; 8] = [
 /// Gemeinsame Ausgabe (Hauptthread und Suchthread).
 pub type Out = Arc<Mutex<Box<dyn Write + Send>>>;
 
-fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(PoisonError::into_inner)
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 fn send(out: &Out, line: &str) {
-    let mut o = lock(out);
+    let mut writer = lock(out);
     // Ausgabefehler (GUI hat die Pipe geschlossen) sind nicht behebbar und werden ignoriert
-    let _ = writeln!(o, "{line}");
-    let _ = o.flush();
+    let _ = writeln!(writer, "{line}");
+    let _ = writer.flush();
 }
 
 /// Gewichtsdatei im Projekt: `engine-rs/target/release/wsp-chess` -> `chess/weights/weights.bin`.
 fn default_weights() -> String {
-    let mut p: PathBuf = std::env::current_exe().unwrap_or_default();
+    let mut dir: PathBuf = std::env::current_exe().unwrap_or_default();
     for _ in 0..4 {
-        p.pop();
-        let c = p.join("weights").join("weights.bin");
-        if c.exists() {
-            return c.to_string_lossy().into_owned();
+        dir.pop();
+        let candidate = dir.join("weights").join("weights.bin");
+        if candidate.exists() {
+            return candidate.to_string_lossy().into_owned();
         }
     }
     "weights/weights.bin".into()
@@ -72,15 +72,15 @@ pub fn parse_position(args: &[&str]) -> Option<(Chess, Vec<u64>)> {
     let (mut pos, rest) = match *args.first()? {
         "startpos" => (Chess::default(), &args[1..]),
         "fen" => {
-            let i = args.iter().position(|a| *a == "moves").unwrap_or(args.len());
-            (parse_fen(&args[1..i].join(" "))?, &args[i..])
+            let moves_at = args.iter().position(|arg| *arg == "moves").unwrap_or(args.len());
+            (parse_fen(&args[1..moves_at].join(" "))?, &args[moves_at..])
         }
         _ => return None,
     };
     let mut hist = vec![];
     if rest.first() == Some(&"moves") {
-        for m in &rest[1..] {
-            let mv = m.parse::<UciMove>().ok()?.to_move(&pos).ok()?;
+        for text in &rest[1..] {
+            let mv = text.parse::<UciMove>().ok()?.to_move(&pos).ok()?;
             hist.push(search::hash(&pos));
             pos.play_unchecked(mv);
         }
@@ -88,8 +88,8 @@ pub fn parse_position(args: &[&str]) -> Option<(Chess, Vec<u64>)> {
     Some((pos, hist))
 }
 
-fn ms(v: i64) -> Duration {
-    Duration::from_millis(u64::try_from(v.max(1)).unwrap_or(1))
+fn ms(millis: i64) -> Duration {
+    Duration::from_millis(u64::try_from(millis.max(1)).unwrap_or(1))
 }
 
 /// `go ...` -> Suchgrenzen. Zeitverwaltung: `movetime` − 5 ms; bei Uhrzeit
@@ -98,20 +98,20 @@ fn ms(v: i64) -> Duration {
 pub fn parse_go(args: &[&str], turn: Color) -> Limits {
     let mut lim = Limits::default();
     let mut num: HashMap<&str, i64> = HashMap::new();
-    let mut i = 0;
-    while i < args.len() {
-        if matches!(args[i], "infinite" | "ponder") {
+    let mut index = 0;
+    while index < args.len() {
+        if matches!(args[index], "infinite" | "ponder") {
             lim.infinite = true;
-            i += 1;
-        } else if let Some(v) = args.get(i + 1).and_then(|v| v.parse::<i64>().ok()) {
-            num.insert(args[i], v);
-            i += 2;
+            index += 1;
+        } else if let Some(value) = args.get(index + 1).and_then(|value| value.parse::<i64>().ok()) {
+            num.insert(args[index], value);
+            index += 2;
         } else {
-            i += 1;
+            index += 1;
         }
     }
-    lim.depth = num.get("depth").and_then(|&d| i32::try_from(d).ok());
-    lim.nodes = num.get("nodes").and_then(|&n| u64::try_from(n).ok());
+    lim.depth = num.get("depth").and_then(|&depth| i32::try_from(depth).ok());
+    lim.nodes = num.get("nodes").and_then(|&nodes| u64::try_from(nodes).ok());
     if lim.infinite || lim.depth.is_some() || lim.nodes.is_some() {
         return lim;
     }
@@ -120,8 +120,8 @@ pub fn parse_go(args: &[&str], turn: Color) -> Limits {
     } else {
         ("btime", "binc")
     };
-    lim.movetime = Some(if let Some(&mt) = num.get("movetime") {
-        ms(mt - 5)
+    lim.movetime = Some(if let Some(&movetime) = num.get("movetime") {
+        ms(movetime - 5)
     } else if let Some(&left) = num.get(time) {
         let inc = num.get(inc).copied().unwrap_or(0);
         let togo = num.get("movestogo").copied().unwrap_or(30).max(1);
@@ -134,38 +134,38 @@ pub fn parse_go(args: &[&str], turn: Color) -> Limits {
 
 /// UCI-Score: `cp x` oder `mate n`.
 #[must_use]
-pub fn score_str(s: i32) -> String {
-    if s.abs() >= search::MATE_BOUND {
-        let n = (search::MATE - s.abs() + 1) / 2;
-        format!("mate {}", if s > 0 { n } else { -n })
+pub fn score_str(score: i32) -> String {
+    if score.abs() >= search::MATE_BOUND {
+        let moves = (search::MATE - score.abs() + 1) / 2;
+        format!("mate {}", if score > 0 { moves } else { -moves })
     } else {
-        format!("cp {s}")
+        format!("cp {score}")
     }
 }
 
 /// Zahl der Blätter in Tiefe `d` (Zuggenerator-Test).
 #[must_use]
-pub fn perft(pos: &Chess, d: u32) -> u64 {
-    if d == 0 {
+pub fn perft(pos: &Chess, depth: u32) -> u64 {
+    if depth == 0 {
         return 1;
     }
     let moves = pos.legal_moves();
-    if d == 1 {
+    if depth == 1 {
         return moves.len() as u64;
     }
     moves
         .into_iter()
-        .map(|m| {
-            let mut c = pos.clone();
-            c.play_unchecked(m);
-            perft(&c, d - 1)
+        .map(|mv| {
+            let mut child = pos.clone();
+            child.play_unchecked(mv);
+            perft(&child, depth - 1)
         })
         .sum()
 }
 
-fn per_second(n: u64, t: Duration) -> u64 {
-    let ms = t.as_millis().max(1);
-    u64::try_from(u128::from(n) * 1000 / ms).unwrap_or(u64::MAX)
+fn per_second(count: u64, elapsed: Duration) -> u64 {
+    let ms = elapsed.as_millis().max(1);
+    u64::try_from(u128::from(count) * 1000 / ms).unwrap_or(u64::MAX)
 }
 
 /// Zustand der Engine zwischen den Befehlen.
@@ -206,28 +206,28 @@ impl Engine {
 
     /// Lädt das Netz, falls nötig. Meldet Fehler als `info string` und gibt `false` zurück.
     fn ensure(&mut self) -> bool {
-        let mut g = lock(&self.searcher);
-        if g.is_none() {
+        let mut slot = lock(&self.searcher);
+        if slot.is_none() {
             match Net::load(&self.weights) {
-                Ok(net) => *g = Some(Searcher::new(Arc::new(net), self.hash_mb, Arc::clone(&self.stop))),
-                Err(e) => {
-                    drop(g);
-                    self.send(&format!("info string Fehler: {e}"));
+                Ok(net) => *slot = Some(Searcher::new(Arc::new(net), self.hash_mb, Arc::clone(&self.stop))),
+                Err(err) => {
+                    drop(slot);
+                    self.send(&format!("info string Fehler: {err}"));
                     return false;
                 }
             }
         }
-        if let Some(s) = g.as_mut() {
-            s.opts = self.opts;
+        if let Some(searcher) = slot.as_mut() {
+            searcher.opts = self.opts;
         }
         true
     }
 
     fn stop_search(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
-        if let Some(t) = self.thread.take() {
+        if let Some(handle) = self.thread.take() {
             // Ein abgestürzter Suchthread hat nichts mehr auszugeben
-            let _ = t.join();
+            let _ = handle.join();
         }
     }
 
@@ -235,9 +235,9 @@ impl Engine {
     fn finish(&mut self) {
         if self.infinite {
             self.stop_search();
-        } else if let Some(t) = self.thread.take() {
+        } else if let Some(handle) = self.thread.take() {
             // Ein abgestürzter Suchthread hat nichts mehr auszugeben
-            let _ = t.join();
+            let _ = handle.join();
         }
     }
 
@@ -249,17 +249,20 @@ impl Engine {
             self.weights
         ));
         self.send("option name Hash type spin default 64 min 1 max 4096");
-        for (_, n) in Feature::ALL {
-            self.send(&format!("option name {n} type check default true"));
+        for (_, name) in Feature::ALL {
+            self.send(&format!("option name {name} type check default true"));
         }
         self.send("uciok");
     }
 
     fn setoption(&mut self, args: &[&str]) {
-        let i = args.iter().position(|a| *a == "name").map_or(0, |i| i + 1);
-        let j = args.iter().position(|a| *a == "value").unwrap_or(args.len());
-        let name = args[i.min(j)..j].join(" ");
-        let value = args.get(j + 1..).map(|v| v.join(" ")).unwrap_or_default();
+        let start = args.iter().position(|arg| *arg == "name").map_or(0, |at| at + 1);
+        let value_at = args.iter().position(|arg| *arg == "value").unwrap_or(args.len());
+        let name = args[start.min(value_at)..value_at].join(" ");
+        let value = args
+            .get(value_at + 1..)
+            .map(|words| words.join(" "))
+            .unwrap_or_default();
         self.stop_search();
         if name.eq_ignore_ascii_case("weights") {
             self.weights = value;
@@ -267,8 +270,8 @@ impl Engine {
         } else if name.eq_ignore_ascii_case("hash") {
             self.hash_mb = value.parse().unwrap_or(64);
             *lock(&self.searcher) = None;
-        } else if let Some(f) = Feature::by_name(&name) {
-            self.opts.set(f, value.eq_ignore_ascii_case("true"));
+        } else if let Some(feature) = Feature::by_name(&name) {
+            self.opts.set(feature, value.eq_ignore_ascii_case("true"));
         } else {
             self.send(&format!("info string unbekannte Option {name}"));
         }
@@ -283,28 +286,28 @@ impl Engine {
         let lim = parse_go(args, self.pos.turn());
         self.infinite = lim.infinite;
         let (pos, hist) = (self.pos.clone(), self.hist.clone());
-        let (sm, stop, out) = (
+        let (shared, stop, out) = (
             Arc::clone(&self.searcher),
             Arc::clone(&self.stop),
             Arc::clone(&self.out),
         );
         self.thread = Some(thread::spawn(move || {
             let best = {
-                let mut g = lock(&sm);
-                let Some(s) = g.as_mut() else { return };
-                let (best, info) = s.search(&pos, &hist, lim, |i| {
-                    let pv: Vec<String> = i.pv.iter().map(|&m| search::uci(m)).collect();
+                let mut slot = lock(&shared);
+                let Some(searcher) = slot.as_mut() else { return };
+                let (best, info) = searcher.search(&pos, &hist, lim, |progress| {
+                    let pv: Vec<String> = progress.pv.iter().map(|&mv| search::uci(mv)).collect();
                     send(
                         &out,
                         &format!(
                             "info depth {} seldepth {} score {} nodes {} nps {} hashfull {} time {} pv {}",
-                            i.depth,
-                            i.seldepth,
-                            score_str(i.score),
-                            i.nodes,
-                            per_second(i.nodes, i.time),
-                            i.hashfull,
-                            i.time.as_millis().max(1),
+                            progress.depth,
+                            progress.seldepth,
+                            score_str(progress.score),
+                            progress.nodes,
+                            per_second(progress.nodes, progress.time),
+                            progress.hashfull,
+                            progress.time.as_millis().max(1),
                             pv.join(" ")
                         ),
                     );
@@ -323,20 +326,20 @@ impl Engine {
             while lim.infinite && !stop.load(Ordering::SeqCst) {
                 thread::sleep(Duration::from_millis(2));
             }
-            let bm = best.map_or_else(|| "0000".to_string(), search::uci);
-            send(&out, &format!("bestmove {bm}"));
+            let best_move = best.map_or_else(|| "0000".to_string(), search::uci);
+            send(&out, &format!("bestmove {best_move}"));
         }));
     }
 
     fn bench(&mut self, args: &[&str]) {
-        let depth = args.first().and_then(|d| d.parse().ok()).unwrap_or(7);
+        let depth = args.first().and_then(|arg| arg.parse().ok()).unwrap_or(7);
         if !self.ensure() {
             return;
         }
         let (mut nodes, mut evals, started) = (0u64, 0u64, Instant::now());
         {
-            let mut g = lock(&self.searcher);
-            let Some(searcher) = g.as_mut() else {
+            let mut slot = lock(&self.searcher);
+            let Some(searcher) = slot.as_mut() else {
                 return;
             };
             for fen in BENCH {
@@ -352,19 +355,19 @@ impl Engine {
                 evals += info.evals;
             }
         }
-        let el = started.elapsed();
+        let elapsed = started.elapsed();
         self.send(&format!(
             "info string bench depth {depth} nodes {nodes} evals {evals} time {} nps {} eps {}",
-            el.as_millis(),
-            per_second(nodes, el),
-            per_second(evals, el)
+            elapsed.as_millis(),
+            per_second(nodes, elapsed),
+            per_second(evals, elapsed)
         ));
     }
 
     /// Verarbeitet eine Eingabezeile. Gibt `false` bei `quit` zurück.
     pub fn command(&mut self, line: &str) -> bool {
-        let tok: Vec<&str> = line.split_whitespace().collect();
-        let Some((&cmd, args)) = tok.split_first() else {
+        let tokens: Vec<&str> = line.split_whitespace().collect();
+        let Some((&cmd, args)) = tokens.split_first() else {
             return true;
         };
         match cmd {
@@ -379,8 +382,8 @@ impl Engine {
             "ucinewgame" => {
                 self.stop_search();
                 if self.ensure() {
-                    if let Some(s) = lock(&self.searcher).as_mut() {
-                        s.new_game();
+                    if let Some(searcher) = lock(&self.searcher).as_mut() {
+                        searcher.new_game();
                     }
                 }
                 self.pos = Chess::default();
@@ -388,9 +391,9 @@ impl Engine {
             }
             "position" => {
                 self.stop_search();
-                if let Some((p, h)) = parse_position(args) {
-                    self.pos = p;
-                    self.hist = h;
+                if let Some((position, history)) = parse_position(args) {
+                    self.pos = position;
+                    self.hist = history;
                 } else {
                     self.send("info string ungültige Stellung");
                 }
@@ -401,38 +404,47 @@ impl Engine {
                 self.stop_search();
                 return false;
             }
-            "eval" => {
-                if self.ensure() {
-                    let s = lock(&self.searcher).as_ref().map(|s| s.net().score(&self.pos));
-                    if let Some(s) = s {
-                        self.send(&format!("info string eval {s:.6}"));
-                    }
-                }
-            }
-            "perft" => {
-                let d = args.first().and_then(|d| d.parse().ok()).unwrap_or(1);
-                let t = Instant::now();
-                let n = perft(&self.pos, d);
-                self.send(&format!(
-                    "info string perft {d} {n} {} ms",
-                    t.elapsed().as_millis()
-                ));
-            }
+            "eval" => self.static_eval(),
+            "perft" => self.perft(args),
             "bench" => self.bench(args),
             _ => {}
         }
         true
     }
+
+    /// `eval`: statische Bewertung der aktuellen Stellung in Bauern.
+    fn static_eval(&mut self) {
+        if !self.ensure() {
+            return;
+        }
+        let score = lock(&self.searcher)
+            .as_ref()
+            .map(|searcher| searcher.net().score(&self.pos));
+        if let Some(score) = score {
+            self.send(&format!("info string eval {score:.6}"));
+        }
+    }
+
+    /// `perft [tiefe]`: Zahl der Blätter für den Zuggenerator-Test.
+    fn perft(&self, args: &[&str]) {
+        let depth = args.first().and_then(|arg| arg.parse().ok()).unwrap_or(1);
+        let started = Instant::now();
+        let leaves = perft(&self.pos, depth);
+        self.send(&format!(
+            "info string perft {depth} {leaves} {} ms",
+            started.elapsed().as_millis()
+        ));
+    }
 }
 
 /// Liest Befehle bis `quit` oder Eingabeende.
 pub fn run(input: impl BufRead, out: Out) {
-    let mut eng = Engine::new(out);
+    let mut engine = Engine::new(out);
     for line in input.lines() {
         let Ok(line) = line else { break };
-        if !eng.command(&line) {
+        if !engine.command(&line) {
             return;
         }
     }
-    eng.finish();
+    engine.finish();
 }

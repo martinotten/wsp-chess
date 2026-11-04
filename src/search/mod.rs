@@ -58,30 +58,30 @@ pub fn hash(pos: &Chess) -> u64 {
 
 /// Zug als 16 Bit: von | nach << 6 | Umwandlung << 12 (Rochade: Zielfeld des Königs). 0 = kein Zug.
 #[must_use]
-pub fn enc(m: Move) -> u16 {
-    let (from, to) = match m {
+pub fn move_code(mv: Move) -> u16 {
+    let (from, to) = match mv {
         Move::Castle { king, rook } => {
-            let f = if rook.file() > king.file() {
+            let king_file = if rook.file() > king.file() {
                 File::G
             } else {
                 File::C
             };
-            (king, Square::from_coords(f, king.rank()))
+            (king, Square::from_coords(king_file, king.rank()))
         }
-        _ => (m.from().unwrap_or(m.to()), m.to()),
+        _ => (mv.from().unwrap_or(mv.to()), mv.to()),
     };
-    let promo = m.promotion().map_or(0, u16::from);
+    let promo = mv.promotion().map_or(0, u16::from);
     u16::from(from) | u16::from(to) << 6 | promo << 12
 }
 
 /// Zug in UCI-Schreibweise (Rochade als Königszug).
 #[must_use]
-pub fn uci(m: Move) -> String {
-    UciMove::from_move(m, CastlingMode::Standard).to_string()
+pub fn uci(mv: Move) -> String {
+    UciMove::from_move(mv, CastlingMode::Standard).to_string()
 }
 
-fn is_quiet(m: Move) -> bool {
-    !m.is_capture() && !m.is_promotion()
+fn is_quiet(mv: Move) -> bool {
+    !mv.is_capture() && !mv.is_promotion()
 }
 
 /// Akkumulator je Suchhöhe für die inkrementelle Bewertung.
@@ -123,8 +123,8 @@ impl Searcher {
     /// Neuer Sucher mit Transpositionstabelle von `hash_mb` MB; `stop` bricht eine Suche von außen ab.
     #[must_use]
     pub fn new(net: Arc<Net>, hash_mb: usize, stop: Arc<AtomicBool>) -> Searcher {
-        let nt = net.n_targets();
-        let nw = net.n_work();
+        let n_targets = net.n_targets();
+        let n_work = net.n_work();
         Searcher {
             net,
             tt: Tt::new(hash_mb),
@@ -146,10 +146,10 @@ impl Searcher {
                 .map(|_| Slot {
                     board: None,
                     persp: Color::White,
-                    acc: vec![0.0; nt],
+                    acc: vec![0.0; n_targets],
                 })
                 .collect(),
-            work: vec![0.0; nw],
+            work: vec![0.0; n_work],
             diff: Vec::with_capacity(32),
             incremental: true,
             check_incremental: None,
@@ -174,34 +174,34 @@ impl Searcher {
     /// (gleiche Perspektive) nachgeführt und nur bei großem Unterschied neu berechnet.
     pub fn eval(&mut self, pos: &Chess, ply: usize) -> i32 {
         self.evals += 1;
-        let c = pos.turn();
+        let persp = pos.turn();
         let ply = ply.min(MAX_PLY + 1);
         let net = &self.net;
-        let (lo, hi) = self.slots.split_at_mut(ply);
-        let slot = &mut hi[0];
+        let (above, from_ply) = self.slots.split_at_mut(ply);
+        let slot = &mut from_ply[0];
         let mut done = false;
         if self.incremental {
-            if let (Some(b), true) = (&slot.board, slot.persp == c) {
-                done = net.update(b, pos.board(), c, &mut slot.acc, &mut self.diff);
+            if let (Some(board), true) = (&slot.board, slot.persp == persp) {
+                done = net.update(board, pos.board(), persp, &mut slot.acc, &mut self.diff);
             }
             if !done && ply >= 2 {
-                let g = &lo[ply - 2];
-                if let (Some(b), true) = (&g.board, g.persp == c) {
-                    slot.acc.copy_from_slice(&g.acc);
-                    done = net.update(b, pos.board(), c, &mut slot.acc, &mut self.diff);
+                let grandparent = &above[ply - 2];
+                if let (Some(board), true) = (&grandparent.board, grandparent.persp == persp) {
+                    slot.acc.copy_from_slice(&grandparent.acc);
+                    done = net.update(board, pos.board(), persp, &mut slot.acc, &mut self.diff);
                 }
             }
         }
         if !done {
-            net.refresh(pos.board(), c, &mut slot.acc);
+            net.refresh(pos.board(), persp, &mut slot.acc);
         }
         slot.board = Some(pos.board().clone());
-        slot.persp = c;
-        let v = net.score_from(&slot.acc, &mut self.work);
+        slot.persp = persp;
+        let score = net.score_from(&slot.acc, &mut self.work);
         if let Some(worst) = self.check_incremental.as_mut() {
-            *worst = worst.max((v - net.score(pos)).abs());
+            *worst = worst.max((score - net.score(pos)).abs());
         }
-        to_cp(v)
+        to_cp(score)
     }
 
     /// Zählt einen Knoten und prüft regelmäßig Stopp, Zeit und Knotenlimit.
@@ -214,8 +214,8 @@ impl Searcher {
 
     fn should_stop(&self) -> bool {
         self.stop.load(Ordering::Relaxed)
-            || self.deadline.is_some_and(|d| Instant::now() >= d)
-            || self.max_nodes.is_some_and(|n| self.nodes >= n)
+            || self.deadline.is_some_and(|deadline| Instant::now() >= deadline)
+            || self.max_nodes.is_some_and(|max_nodes| self.nodes >= max_nodes)
     }
 
     /// Betritt einen Knoten auf Höhe `ply`; `false`, wenn die Suche abgebrochen ist.
@@ -227,7 +227,7 @@ impl Searcher {
 
     /// Gleiche Stellung früher im Pfad (gleiche Seite am Zug), höchstens bis zum letzten
     /// irreversiblen Zug; 0 im Pfad markiert einen Nullzug (Grenze).
-    fn is_repetition(&self, h: u64, halfmoves: u32) -> bool {
+    fn is_repetition(&self, key: u64, halfmoves: u32) -> bool {
         let window = usize::try_from(halfmoves).unwrap_or(usize::MAX);
         self.path
             .iter()
@@ -235,7 +235,7 @@ impl Searcher {
             .skip(2)
             .step_by(2)
             .take(window / 2)
-            .take_while(|&&x| x != 0)
-            .any(|&x| x == h)
+            .take_while(|&&earlier| earlier != 0)
+            .any(|&earlier| earlier == key)
     }
 }

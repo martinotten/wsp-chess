@@ -2,7 +2,7 @@
 
 use super::node::{Best, Candidate, Node, Plan, QNode, TtProbe, Window};
 use super::score::{bound_for, from_tt, mated_in, ply_i32, to_tt};
-use super::{enc, hash, is_quiet, Feature, Searcher, INF, MATE_BOUND, MAX_PLY};
+use super::{hash, is_quiet, move_code, Feature, Searcher, INF, MATE_BOUND, MAX_PLY};
 use crate::tt::{Bound, Entry};
 use shakmaty::{Chess, Move, MoveList, Position};
 
@@ -26,8 +26,8 @@ const LMR_DEEP_INDEX: usize = 6;
 
 /// Hat der Ziehende Figuren außer Bauern und König? Sonst droht Zugzwang, und der Nullzug täuscht.
 fn non_pawn_material(pos: &Chess) -> bool {
-    let b = pos.board();
-    (b.by_color(pos.turn()) & !(b.pawns() | b.kings())).any()
+    let board = pos.board();
+    (board.by_color(pos.turn()) & !(board.pawns() | board.kings())).any()
 }
 
 impl Searcher {
@@ -164,21 +164,21 @@ impl Searcher {
     /// zu gut. Gibt den Schnittwert zurück oder `None`.
     fn null_move(&mut self, pos: &Chess, depth: i32, beta: i32, node: Node) -> Option<i32> {
         let child = pos.clone().swap_turn().ok()?;
-        let r = NULL_REDUCTION + i32::from(depth >= NULL_DEEP_DEPTH);
+        let reduction = NULL_REDUCTION + i32::from(depth >= NULL_DEEP_DEPTH);
         self.path.push(0);
         let key = hash(&child);
-        let s = -self.negamax(
+        let score = -self.negamax(
             &child,
-            depth - 1 - r,
+            depth - 1 - reduction,
             Window::null(beta - 1).flip(),
             node.after_null_move(key),
         );
         self.path.pop();
-        if self.aborted || s < beta {
+        if self.aborted || score < beta {
             return None;
         }
         // kein ungeprüftes Matt aus einer Nullzug-Suche melden
-        Some(if s >= MATE_BOUND { beta } else { s })
+        Some(if score >= MATE_BOUND { beta } else { score })
     }
 
     /// Futility: In geringer Resttiefe und weit unter alpha können ruhige Züge alpha nicht erreichen.
@@ -197,31 +197,34 @@ impl Searcher {
         for (index, mv) in ordered.into_iter().enumerate() {
             let mut child = pos.clone();
             child.play_unchecked(mv);
-            let c = Candidate {
+            let candidate = Candidate {
                 mv,
-                code: enc(mv),
+                code: move_code(mv),
                 index,
                 quiet: is_quiet(mv),
                 gives_check: child.is_check(),
             };
-            if plan.futile && c.index > 0 && c.quiet && !c.gives_check {
+            if plan.futile && candidate.cannot_rescue_hopeless_node() {
                 continue;
             }
-            let score = self.search_child(&child, &c, plan, *win);
+            let score = self.search_child(&child, &candidate, plan, *win);
             if self.aborted {
                 return None;
             }
             if score <= best.score {
                 continue;
             }
-            best = Best { score, code: c.code };
+            best = Best {
+                score,
+                code: candidate.code,
+            };
             if plan.node.is_root() {
-                self.root_best = Some((c.mv, score));
+                self.root_best = Some((candidate.mv, score));
             }
             win.alpha = win.alpha.max(score);
             if win.alpha >= win.beta {
-                if c.quiet {
-                    self.reward_quiet(pos.turn(), c.code, plan.depth, plan.node.ply);
+                if candidate.quiet {
+                    self.reward_quiet(pos.turn(), candidate.code, plan.depth, plan.node.ply);
                 }
                 break;
             }
@@ -230,14 +233,14 @@ impl Searcher {
     }
 
     /// Wert eines Kindknotens aus Sicht des Ziehenden.
-    fn search_child(&mut self, child: &Chess, c: &Candidate, plan: &Plan, win: Window) -> i32 {
+    fn search_child(&mut self, child: &Chess, candidate: &Candidate, plan: &Plan, win: Window) -> i32 {
         let key = hash(child);
         self.path.push(key);
         let node = plan.node.child(key);
-        let score = if c.index == 0 {
+        let score = if candidate.index == 0 {
             -self.negamax(child, plan.depth - 1, win.flip(), node)
         } else {
-            self.search_late_move(child, c, plan, win, node)
+            self.search_late_move(child, candidate, plan, win, node)
         };
         self.path.pop();
         score
@@ -248,7 +251,7 @@ impl Searcher {
     fn search_late_move(
         &mut self,
         child: &Chess,
-        c: &Candidate,
+        candidate: &Candidate,
         plan: &Plan,
         win: Window,
         node: Node,
@@ -256,9 +259,9 @@ impl Searcher {
         let depth = plan.depth - 1;
         let pvs = self.opts.on(Feature::Pvs);
         let probe = if pvs { Window::null(win.alpha) } else { win };
-        let r = self.lmr_reduction(c, plan);
-        let mut score = -self.negamax(child, depth - r, probe.flip(), node);
-        if r > 0 && score > win.alpha && !self.aborted {
+        let reduction = self.lmr_reduction(candidate, plan);
+        let mut score = -self.negamax(child, depth - reduction, probe.flip(), node);
+        if reduction > 0 && score > win.alpha && !self.aborted {
             score = -self.negamax(child, depth, probe.flip(), node);
         }
         if pvs && score > win.alpha && score < win.beta && !self.aborted {
@@ -268,17 +271,17 @@ impl Searcher {
     }
 
     /// Late Move Reduction: späte, ruhige Züge ohne Schach weniger tief durchsuchen.
-    pub(super) fn lmr_reduction(&self, c: &Candidate, plan: &Plan) -> i32 {
+    pub(super) fn lmr_reduction(&self, candidate: &Candidate, plan: &Plan) -> i32 {
         let reduce = self.opts.on(Feature::Lmr)
             && plan.depth >= LMR_MIN_DEPTH
-            && c.index >= LMR_MIN_INDEX
-            && c.quiet
+            && candidate.index >= LMR_MIN_INDEX
+            && candidate.quiet
             && !plan.in_check
-            && !c.gives_check
-            && !self.is_killer(plan.node.ply, c.code);
+            && !candidate.gives_check
+            && !self.is_killer(plan.node.ply, candidate.code);
         if !reduce {
             return 0;
         }
-        1 + i32::from(c.index >= LMR_DEEP_INDEX && plan.depth >= LMR_DEEP_DEPTH)
+        1 + i32::from(candidate.index >= LMR_DEEP_INDEX && plan.depth >= LMR_DEEP_DEPTH)
     }
 }

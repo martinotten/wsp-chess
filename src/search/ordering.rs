@@ -1,6 +1,6 @@
 //! Zugsortierung: TT-Zug, Schläge nach MVV-LVA, Killerzüge, History.
 
-use super::{enc, is_quiet, Feature, Searcher};
+use super::{is_quiet, move_code, Feature, Searcher};
 use crate::exchange::{value, victim_value};
 use shakmaty::{Chess, Color, Move, Position};
 
@@ -12,40 +12,42 @@ const ORDER_KILLERS: [i32; 2] = [900_000, 800_000];
 /// History: Obergrenze je Eintrag.
 const HISTORY_MAX: i32 = 400_000;
 
-fn history_idx(c: Color, e: u16) -> usize {
-    usize::from(c == Color::Black) * 4096 + usize::from(e & 0xfff)
+/// Eintrag in der History-Tabelle: je Farbe ein Block, darin Start- und Zielfeld des Zugs.
+fn history_idx(turn: Color, code: u16) -> usize {
+    usize::from(turn == Color::Black) * 4096 + usize::from(code & 0xfff)
 }
 
 impl Searcher {
-    fn order_score(&self, turn: Color, m: Move, tt_move: u16, ply: usize) -> i32 {
-        let e = enc(m);
-        if e == tt_move {
+    /// Rang eines Zugs: je größer, desto früher wird er durchsucht.
+    fn order_score(&self, turn: Color, mv: Move, tt_move: u16, ply: usize) -> i32 {
+        let code = move_code(mv);
+        if code == tt_move {
             return ORDER_TT_MOVE;
         }
-        if !is_quiet(m) {
+        if !is_quiet(mv) {
             // MVV-LVA: wertvolles Opfer zuerst, bei gleichem Opfer der billigere Angreifer
-            let promo = m.promotion().map_or(0, value);
-            return ORDER_CAPTURE + 10 * (victim_value(m) + promo) - value(m.role()) / 100;
+            let promo = mv.promotion().map_or(0, value);
+            return ORDER_CAPTURE + 10 * (victim_value(mv) + promo) - value(mv.role()) / 100;
         }
         if self.opts.on(Feature::Killers) {
-            if let Some(k) = self.killers[ply].iter().position(|&k| k == e) {
-                return ORDER_KILLERS[k];
+            if let Some(slot) = self.killers[ply].iter().position(|&killer| killer == code) {
+                return ORDER_KILLERS[slot];
             }
         }
         if self.opts.on(Feature::History) {
-            return self.history[history_idx(turn, e)];
+            return self.history[history_idx(turn, code)];
         }
         0
     }
 
     pub(super) fn sorted(&self, pos: &Chess, moves: &[Move], tt_move: u16, ply: usize) -> Vec<Move> {
         let turn = pos.turn();
-        let mut v: Vec<(i32, Move)> = moves
+        let mut ranked: Vec<(i32, Move)> = moves
             .iter()
-            .map(|&m| (self.order_score(turn, m, tt_move, ply), m))
+            .map(|&mv| (self.order_score(turn, mv, tt_move, ply), mv))
             .collect();
-        v.sort_unstable_by_key(|&(score, _)| std::cmp::Reverse(score));
-        v.into_iter().map(|(_, m)| m).collect()
+        ranked.sort_unstable_by_key(|&(score, _)| std::cmp::Reverse(score));
+        ranked.into_iter().map(|(_, mv)| mv).collect()
     }
 
     pub(super) fn is_killer(&self, ply: usize, code: u16) -> bool {
@@ -59,8 +61,8 @@ impl Searcher {
             self.killers[ply][0] = code;
         }
         if self.opts.on(Feature::History) {
-            let v = &mut self.history[history_idx(turn, code)];
-            *v = (*v + depth * depth).min(HISTORY_MAX);
+            let score = &mut self.history[history_idx(turn, code)];
+            *score = (*score + depth * depth).min(HISTORY_MAX);
         }
     }
 }

@@ -20,32 +20,32 @@ const DEPTH: i32 = 5;
 /// Standard, jede Technik umgeschaltet (an -> aus, `QChecks` aus -> an).
 fn configs() -> Vec<(String, Opts)> {
     let mut out = vec![("default".to_string(), Opts::default())];
-    for &(f, name) in &Feature::ALL {
-        let mut o = Opts::default();
-        o.set(f, !o.on(f));
-        out.push((format!("{name}={}", o.on(f)), o));
+    for &(feature, name) in &Feature::ALL {
+        let mut opts = Opts::default();
+        opts.set(feature, !opts.on(feature));
+        out.push((format!("{name}={}", opts.on(feature)), opts));
     }
     out
 }
 
 fn fingerprint() -> String {
     let net = Arc::new(Net::load("../weights/weights.bin").unwrap());
-    let mut s = Searcher::new(net, 16, Arc::new(AtomicBool::new(false)));
+    let mut engine = Searcher::new(net, 16, Arc::new(AtomicBool::new(false)));
     let mut text = String::new();
     for (name, opts) in configs() {
-        s.opts = opts;
+        engine.opts = opts;
         for fen in BENCH {
             let pos: Chess = fen
                 .parse::<Fen>()
                 .unwrap()
                 .into_position(CastlingMode::Standard)
                 .unwrap();
-            s.new_game();
+            engine.new_game();
             let lim = Limits {
                 depth: Some(DEPTH),
                 ..Limits::default()
             };
-            let (best, info) = s.search(&pos, &[], lim, |_| {});
+            let (best, info) = engine.search(&pos, &[], lim, |_| {});
             let mv = best.map_or_else(|| "0000".to_string(), search::uci);
             writeln!(text, "{name} {fen} | {} {mv} {}", info.nodes, info.score).unwrap();
         }
@@ -61,8 +61,8 @@ fn search_is_unchanged() {
         return;
     }
     let want = std::fs::read_to_string(GOLDEN).unwrap();
-    for (a, b) in want.lines().zip(now.lines()) {
-        assert_eq!(a, b, "Suche verhält sich anders als in {GOLDEN}");
+    for (expected, actual) in want.lines().zip(now.lines()) {
+        assert_eq!(expected, actual, "Suche verhält sich anders als in {GOLDEN}");
     }
     assert_eq!(want.lines().count(), now.lines().count());
 }

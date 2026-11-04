@@ -27,10 +27,10 @@ pub enum LoadError {
 }
 
 impl fmt::Display for LoadError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            LoadError::Io(e) => write!(f, "Gewichtsdatei nicht lesbar: {e}"),
-            LoadError::Format(m) => write!(f, "Gewichtsdatei ungültig: {m}"),
+            LoadError::Io(err) => write!(out, "Gewichtsdatei nicht lesbar: {err}"),
+            LoadError::Format(reason) => write!(out, "Gewichtsdatei ungültig: {reason}"),
         }
     }
 }
@@ -38,14 +38,19 @@ impl fmt::Display for LoadError {
 impl std::error::Error for LoadError {}
 
 /// Das Netz in dünner Darstellung (je Quelle eine Liste von Zielen).
+///
+/// Quellen sind die Eingabemerkmale und die Neuronen h1, h2, h3; Ziele sind die Vorstufen z1, z2,
+/// z3 und der Ausgang, hintereinander in einem Vektor. Die Gewichte der Quelle `src` stehen in
+/// `targets[starts[src]..starts[src + 1]]` und `weights[…]` (gleicher Bereich).
 pub struct Net {
+    /// Größen der Schichten h1, h2, h3.
     n1: usize,
     n2: usize,
     n3: usize,
     bias: Vec<f32>,
     starts: Vec<usize>,
-    tgt: Vec<usize>,
-    w: Vec<f32>,
+    targets: Vec<usize>,
+    weights: Vec<f32>,
 }
 
 /// Eingabeindex wie `features.xi` in Python: `(Seite*6 + Typ)*64 + Feld`, Sicht `persp`
@@ -53,28 +58,28 @@ pub struct Net {
 #[must_use]
 pub fn feature(persp: Color, piece: Piece, sq: Square) -> usize {
     let side = usize::from(piece.color != persp);
-    let t = usize::from(piece.role) - 1;
-    let s = if persp == Color::Black {
+    let role = usize::from(piece.role) - 1;
+    let seen_sq = if persp == Color::Black {
         sq.flip_vertical()
     } else {
         sq
     };
-    (side * 6 + t) * 64 + s.to_usize()
+    (side * 6 + role) * 64 + seen_sq.to_usize()
 }
 
-/// Ruft `f(i, v)` für alle `v > 0` auf; Blöcke zu 16 Werten werden zuerst als Ganzes geprüft
-/// (vektorisierbar), denn fast alle Neuronen sind inaktiv.
+/// Ruft `visit(index, activation)` für alle positiven Werte auf; Blöcke zu 16 Werten werden zuerst
+/// als Ganzes geprüft (vektorisierbar), denn fast alle Neuronen sind inaktiv.
 #[inline]
 #[expect(
     clippy::needless_bitwise_bool,
     reason = "ohne Verzweigung, damit der Block vektorisiert wird"
 )]
-fn for_active(v: &[f32], mut f: impl FnMut(usize, f32)) {
-    for (ci, ch) in v.chunks(16).enumerate() {
-        if ch.iter().fold(false, |a, &x| a | (x > 0.0)) {
-            for (j, &x) in ch.iter().enumerate() {
-                if x > 0.0 {
-                    f(ci * 16 + j, x);
+fn for_active(values: &[f32], mut visit: impl FnMut(usize, f32)) {
+    for (block_index, block) in values.chunks(16).enumerate() {
+        if block.iter().fold(false, |any, &value| any | (value > 0.0)) {
+            for (offset, &value) in block.iter().enumerate() {
+                if value > 0.0 {
+                    visit(block_index * 16 + offset, value);
                 }
             }
         }
@@ -83,43 +88,43 @@ fn for_active(v: &[f32], mut f: impl FnMut(usize, f32)) {
 
 /// Liest Little-Endian-Werte fester Breite der Reihe nach.
 struct Reader<'a> {
-    b: &'a [u8],
+    bytes: &'a [u8],
 }
 
 impl Reader<'_> {
-    fn take(&mut self, n: usize) -> Result<&[u8], LoadError> {
-        if self.b.len() < n {
+    fn take(&mut self, len: usize) -> Result<&[u8], LoadError> {
+        if self.bytes.len() < len {
             return Err(LoadError::Format("Datei zu kurz"));
         }
-        let (head, rest) = self.b.split_at(n);
-        self.b = rest;
+        let (head, rest) = self.bytes.split_at(len);
+        self.bytes = rest;
         Ok(head)
     }
 
-    fn u32s(&mut self, n: usize) -> Result<Vec<u32>, LoadError> {
+    fn u32s(&mut self, count: usize) -> Result<Vec<u32>, LoadError> {
         Ok(self
-            .take(4 * n)?
+            .take(4 * count)?
             .as_chunks::<4>()
             .0
             .iter()
-            .map(|&c| u32::from_le_bytes(c))
+            .map(|&word| u32::from_le_bytes(word))
             .collect())
     }
 
-    fn f32s(&mut self, n: usize) -> Result<Vec<f32>, LoadError> {
+    fn f32s(&mut self, count: usize) -> Result<Vec<f32>, LoadError> {
         Ok(self
-            .take(4 * n)?
+            .take(4 * count)?
             .as_chunks::<4>()
             .0
             .iter()
-            .map(|&c| f32::from_le_bytes(c))
+            .map(|&word| f32::from_le_bytes(word))
             .collect())
     }
 
-    fn usizes(&mut self, n: usize) -> Result<Vec<usize>, LoadError> {
-        self.u32s(n)?
+    fn usizes(&mut self, count: usize) -> Result<Vec<usize>, LoadError> {
+        self.u32s(count)?
             .into_iter()
-            .map(|x| usize::try_from(x).map_err(|_| LoadError::Format("Index zu groß")))
+            .map(|value| usize::try_from(value).map_err(|_| LoadError::Format("Index zu groß")))
             .collect()
     }
 }
@@ -139,31 +144,31 @@ impl Net {
     ///
     /// # Errors
     /// Wenn die Bytes nicht zum Format passen.
-    pub fn from_bytes(b: &[u8]) -> Result<Net, LoadError> {
-        let mut r = Reader { b };
-        if r.take(4)? != MAGIC {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Net, LoadError> {
+        let mut reader = Reader { bytes };
+        if reader.take(4)? != MAGIC {
             return Err(LoadError::Format("Kennung WSPN fehlt"));
         }
-        if r.u32s(1)? != [VERSION] {
+        if reader.u32s(1)? != [VERSION] {
             return Err(LoadError::Format("unbekannte Version"));
         }
-        let sizes = r.usizes(3)?;
+        let sizes = reader.usizes(3)?;
         let (n1, n2, n3) = (sizes[0], sizes[1], sizes[2]);
-        let nt = n1 + n2 + n3 + 1;
-        let ns = N_INPUTS + n1 + n2 + n3;
-        let bias = r.f32s(nt)?;
-        let starts = r.usizes(ns + 1)?;
-        let nnz = starts[ns];
-        let tgt = r.usizes(nnz)?;
-        let w = r.f32s(nnz)?;
-        if !r.b.is_empty() {
+        let n_targets = n1 + n2 + n3 + 1;
+        let n_sources = N_INPUTS + n1 + n2 + n3;
+        let bias = reader.f32s(n_targets)?;
+        let starts = reader.usizes(n_sources + 1)?;
+        let nnz = starts[n_sources];
+        let targets = reader.usizes(nnz)?;
+        let weights = reader.f32s(nnz)?;
+        if !reader.bytes.is_empty() {
             return Err(LoadError::Format("Daten nach dem Ende"));
         }
-        if starts[0] != 0 || starts.windows(2).any(|p| p[0] > p[1]) {
+        if starts[0] != 0 || starts.windows(2).any(|pair| pair[0] > pair[1]) {
             return Err(LoadError::Format("Zeilenanfänge nicht aufsteigend"));
         }
         // Erstes erlaubtes Ziel je Quelle: Eingaben -> alles, h1 -> ab z2, h2 -> ab z3, h3 -> nur out
-        for src in 0..ns {
+        for src in 0..n_sources {
             let min = if src < N_INPUTS {
                 0
             } else if src < N_INPUTS + n1 {
@@ -173,9 +178,9 @@ impl Net {
             } else {
                 n1 + n2 + n3
             };
-            if tgt[starts[src]..starts[src + 1]]
+            if targets[starts[src]..starts[src + 1]]
                 .iter()
-                .any(|&t| t < min || t >= nt)
+                .any(|&target| target < min || target >= n_targets)
             {
                 return Err(LoadError::Format("Gewicht in eine frühere Schicht"));
             }
@@ -186,8 +191,8 @@ impl Net {
             n3,
             bias,
             starts,
-            tgt,
-            w,
+            targets,
+            weights,
         })
     }
 
@@ -203,12 +208,12 @@ impl Net {
         self.n2 + self.n3 + 1
     }
 
-    /// Addiert `scale` × Zeile `src` auf `z`; Ziele werden um `off` verschoben.
+    /// Addiert `scale` × Gewichte der Quelle `src` auf `dest`, der ab Ziel `offset` beginnt.
     #[inline]
-    fn add_row(&self, src: usize, scale: f32, z: &mut [f32], off: usize) {
-        let (a, b) = (self.starts[src], self.starts[src + 1]);
-        for (&t, &w) in self.tgt[a..b].iter().zip(&self.w[a..b]) {
-            z[t - off] += w * scale;
+    fn add_row(&self, src: usize, scale: f32, dest: &mut [f32], offset: usize) {
+        let row = self.starts[src]..self.starts[src + 1];
+        for (&target, &weight) in self.targets[row.clone()].iter().zip(&self.weights[row]) {
+            dest[target - offset] += weight * scale;
         }
     }
 
@@ -235,16 +240,24 @@ impl Net {
         for color in Color::ALL {
             for role in Role::ALL {
                 let piece = Piece { color, role };
-                let (a, b) = (from.by_piece(piece), to.by_piece(piece));
-                buf.extend((a & !b).into_iter().map(|sq| (feature(persp, piece, sq), -1.0)));
-                buf.extend((b & !a).into_iter().map(|sq| (feature(persp, piece, sq), 1.0)));
+                let (before, after) = (from.by_piece(piece), to.by_piece(piece));
+                buf.extend(
+                    (before & !after)
+                        .into_iter()
+                        .map(|sq| (feature(persp, piece, sq), -1.0)),
+                );
+                buf.extend(
+                    (after & !before)
+                        .into_iter()
+                        .map(|sq| (feature(persp, piece, sq), 1.0)),
+                );
                 if buf.len() > MAX_CHANGES {
                     return false;
                 }
             }
         }
-        for &(f, sign) in buf.iter() {
-            self.add_row(f, sign, acc, 0);
+        for &(input, sign) in buf.iter() {
+            self.add_row(input, sign, acc, 0);
         }
         true
     }
@@ -254,12 +267,16 @@ impl Net {
     pub fn score_from(&self, acc: &[f32], work: &mut [f32]) -> f32 {
         let (n1, n2, n3) = (self.n1, self.n2, self.n3);
         work.copy_from_slice(&acc[n1..]);
-        for_active(&acc[..n1], |i, h| self.add_row(N_INPUTS + i, h, work, n1));
+        for_active(&acc[..n1], |neuron, act| {
+            self.add_row(N_INPUTS + neuron, act, work, n1);
+        });
         let (h2, rest) = work.split_at_mut(n2);
-        for_active(h2, |j, h| self.add_row(N_INPUTS + n1 + j, h, rest, n1 + n2));
+        for_active(h2, |neuron, act| {
+            self.add_row(N_INPUTS + n1 + neuron, act, rest, n1 + n2);
+        });
         let (h3, out) = rest.split_at_mut(n3);
-        for_active(h3, |k, h| {
-            self.add_row(N_INPUTS + n1 + n2 + k, h, out, n1 + n2 + n3);
+        for_active(h3, |neuron, act| {
+            self.add_row(N_INPUTS + n1 + n2 + neuron, act, out, n1 + n2 + n3);
         });
         out[0]
     }

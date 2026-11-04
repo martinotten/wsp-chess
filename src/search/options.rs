@@ -51,8 +51,8 @@ impl Feature {
     pub fn by_name(name: &str) -> Option<Feature> {
         Feature::ALL
             .iter()
-            .find(|(_, n)| n.eq_ignore_ascii_case(name))
-            .map(|&(f, _)| f)
+            .find(|(_, feature_name)| feature_name.eq_ignore_ascii_case(name))
+            .map(|&(feature, _)| feature)
     }
 }
 
@@ -62,22 +62,22 @@ pub struct Opts([bool; Feature::ALL.len()]);
 
 impl Default for Opts {
     fn default() -> Self {
-        let mut o = Opts([true; Feature::ALL.len()]);
-        o.set(Feature::QChecks, false);
-        o
+        let mut opts = Opts([true; Feature::ALL.len()]);
+        opts.set(Feature::QChecks, false);
+        opts
     }
 }
 
 impl Opts {
     /// Ist die Technik eingeschaltet?
     #[must_use]
-    pub fn on(&self, f: Feature) -> bool {
-        self.0[f as usize]
+    pub fn on(&self, feature: Feature) -> bool {
+        self.0[feature as usize]
     }
 
     /// Schaltet die Technik ein oder aus.
-    pub fn set(&mut self, f: Feature, value: bool) {
-        self.0[f as usize] = value;
+    pub fn set(&mut self, feature: Feature, value: bool) {
+        self.0[feature as usize] = value;
     }
 }
 

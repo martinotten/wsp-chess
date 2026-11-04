@@ -7,3 +7,6 @@ allow-print-in-tests = true
 cognitive-complexity-threshold = 15
 too-many-lines-threshold = 60
 too-many-arguments-threshold = 6
+
+# Namen mit nur einem Buchstaben sind verboten (clippy::min_ident_chars), ohne Ausnahmen
+allowed-idents-below-min-chars = []

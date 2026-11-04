@@ -15,31 +15,31 @@ pub(super) fn mated_in(ply: usize) -> i32 {
 }
 
 #[expect(clippy::cast_possible_truncation, reason = "Wert vorher auf ±20000 begrenzt")]
-pub(super) fn to_cp(s: f32) -> i32 {
-    (s * 100.0).round().clamp(-EVAL_CLAMP, EVAL_CLAMP) as i32
+pub(super) fn to_cp(pawns: f32) -> i32 {
+    (pawns * 100.0).round().clamp(-EVAL_CLAMP, EVAL_CLAMP) as i32
 }
 
 /// Mattwert beim Speichern auf die Knotenhöhe normalisieren („matt in n ab hier“).
-pub(super) fn to_tt(s: i32, ply: usize) -> i32 {
-    let p = ply_i32(ply);
-    if s >= MATE_BOUND {
-        s + p
-    } else if s <= -MATE_BOUND {
-        s - p
+pub(super) fn to_tt(score: i32, ply: usize) -> i32 {
+    let height = ply_i32(ply);
+    if score >= MATE_BOUND {
+        score + height
+    } else if score <= -MATE_BOUND {
+        score - height
     } else {
-        s
+        score
     }
 }
 
 /// Gegenstück zu [`to_tt`]: gespeicherten Mattwert auf die aktuelle Höhe umrechnen.
-pub(super) fn from_tt(s: i32, ply: usize) -> i32 {
-    let p = ply_i32(ply);
-    if s >= MATE_BOUND {
-        s - p
-    } else if s <= -MATE_BOUND {
-        s + p
+pub(super) fn from_tt(score: i32, ply: usize) -> i32 {
+    let height = ply_i32(ply);
+    if score >= MATE_BOUND {
+        score - height
+    } else if score <= -MATE_BOUND {
+        score + height
     } else {
-        s
+        score
     }
 }
 

@@ -114,7 +114,7 @@ pub(super) struct Plan {
     pub(super) node: Node,
     pub(super) depth: i32,
     pub(super) in_check: bool,
-    /// Ruhige Züge ohne Schach überspringen (Futility).
+    /// Aussichtsloser Knoten: statische Bewertung weit unter alpha, ruhige Züge holen das nicht auf (Futility).
     pub(super) futile: bool,
     pub(super) tt_move: u16,
 }
@@ -127,6 +127,15 @@ pub(super) struct Candidate {
     pub(super) index: usize,
     pub(super) quiet: bool,
     pub(super) gives_check: bool,
+}
+
+impl Candidate {
+    /// Ruhiger Zug ohne Schach, nicht der erste: kann den Wert eines aussichtslosen Knotens nicht
+    /// mehr retten (Futility, siehe [`Plan::futile`]). Der erste Zug wird immer durchsucht, damit
+    /// der Knoten einen Wert bekommt.
+    pub(super) fn cannot_rescue_hopeless_node(&self) -> bool {
+        self.index > 0 && self.quiet && !self.gives_check
+    }
 }
 
 /// Ergebnis der Transpositionstabelle für einen Knoten.
