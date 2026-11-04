@@ -1,0 +1,11 @@
+//! Schach-Engine mit dem handgeschriebenen Netz (Weight-Space Programming) als Bewertung.
+//!
+//! - [`eval`] – dünne, inkrementelle Auswertung des Netzes
+//! - [`search`] – Alpha-Beta-Suche mit abschaltbaren Techniken
+//! - [`tt`] – Transpositionstabelle
+//! - [`uci`] – UCI-Protokoll
+
+pub mod eval;
+pub mod search;
+pub mod tt;
+pub mod uci;

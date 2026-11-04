@@ -1,0 +1,42 @@
+[package]
+name = "wsp-chess"
+version = "0.1.0"
+edition = "2021"
+description = "UCI-Engine mit dem handgeschriebenen Schachnetz (Weight-Space Programming) als Bewertung"
+
+[dependencies]
+shakmaty = "0.30"
+
+[dev-dependencies]
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+debug = false
+
+[profile.test]
+opt-level = 3
+
+# Strenge Regeln, geprüft von ./check.sh (fmt, clippy -D warnings, Tests)
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+unused_qualifications = "warn"
+unreachable_pub = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+todo = "warn"
+dbg_macro = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+undocumented_unsafe_blocks = "warn"
+clone_on_ref_ptr = "warn"
+shadow_unrelated = "warn"
+semicolon_if_nothing_returned = "warn"
