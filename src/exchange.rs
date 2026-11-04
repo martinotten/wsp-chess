@@ -67,12 +67,15 @@ fn speculative_gains(pos: &Chess, m: Move, from: Square, gains: &mut [i32; MAX_E
     let mut occ = occupancy_after(b, m, from);
     let mut on_target = m.role();
     let mut side = !pos.turn();
-    let mut last = 0;
+    let mut last: usize = 0;
     gains[0] = victim_value(m);
     while let Some((role, sq)) = least_valuable_attacker(b, target, side, occ) {
-        // Steht der König auf dem Feld und greift noch eine Figur an, endet die Folge. Ungenau: Der
-        // unzulässige Schlag des Königs selbst bleibt gezählt (Test `king_cannot_recapture_into_attack`).
-        if on_target == Role::King || last + 1 >= MAX_EXCHANGE {
+        if on_target == Role::King {
+            // Der König hat auf ein noch angegriffenes Feld geschlagen: unzulässig, Schlag zurücknehmen
+            last = last.saturating_sub(1);
+            break;
+        }
+        if last + 1 >= MAX_EXCHANGE {
             break;
         }
         last += 1;
@@ -148,10 +151,13 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "bekannter Fehler: Königsschlag ins Angriffsfeld wird gezählt; Korrektur braucht SPRT"]
     fn king_cannot_recapture_into_attack() {
+        // Nur der König deckt d5, der zweite Turm steht dahinter: Kxd5 wäre unzulässig
         let (p, m) = play("8/8/4k3/3p4/8/8/3R4/3RK3 w - - 0 1", "d2d5");
         assert_eq!(see(&p, m), 100);
+        // Ohne zweiten Turm darf der König zurückschlagen: Turm gegen Bauer
+        let (q, n) = play("8/8/4k3/3p4/8/8/3R4/4K3 w - - 0 1", "d2d5");
+        assert_eq!(see(&q, n), -400);
     }
 
     #[test]
