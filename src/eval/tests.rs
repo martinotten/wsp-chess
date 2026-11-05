@@ -2,7 +2,7 @@
 //! Referenz (dichter Scan, Zeilen in gespeicherter Reihenfolge), verglichen mit `f32::to_bits`.
 
 use super::{feature, Net, N_INPUTS};
-use shakmaty::{Chess, Color, Move, Position};
+use crate::board::{Color, Move, Piece, Position, Square};
 
 fn net() -> Net {
     Net::load("weights/weights.bin").expect("Gewichtsdatei")
@@ -53,7 +53,7 @@ impl Rng {
 
 /// Eine Stellung mit den Akkumulatoren beider Perspektiven (Index 0 = Weiß).
 struct Node {
-    position: Chess,
+    position: Position,
     acc: [Vec<f32>; 2],
 }
 
@@ -96,7 +96,7 @@ fn score_and_update_bit_identical_to_reference() {
     let mut work = vec![0.0; net.n_work()];
     let mut checked = 0;
     for _game in 0..30 {
-        let start = Chess::default();
+        let start = Position::default();
         let mut acc = [vec![0.0; net.n_targets()], vec![0.0; net.n_targets()]];
         for (persp, slot) in Color::ALL.into_iter().zip(&mut acc) {
             net.refresh(start.board(), persp, slot);
@@ -129,13 +129,7 @@ fn score_and_update_bit_identical_to_reference() {
 
 #[test]
 fn feature_mirrors_for_black() {
-    let piece = shakmaty::Piece {
-        color: Color::White,
-        role: shakmaty::Role::Rook,
-    };
-    assert_eq!(feature(Color::White, piece, shakmaty::Square::D1), 3 * 64 + 3);
-    assert_eq!(
-        feature(Color::Black, piece, shakmaty::Square::D1),
-        (6 + 3) * 64 + 59
-    );
+    let (color, role) = (Color::White, Piece::Rook);
+    assert_eq!(feature(Color::White, color, role, Square::D1), 3 * 64 + 3);
+    assert_eq!(feature(Color::Black, color, role, Square::D1), (6 + 3) * 64 + 59);
 }

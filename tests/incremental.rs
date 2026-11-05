@@ -1,8 +1,7 @@
 //! Inkrementelle Bewertung während einer echten Suche = Neuberechnung.
-use shakmaty::fen::Fen;
-use shakmaty::{CastlingMode, Chess};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use wsp_chess::board::Position;
 use wsp_chess::eval::Net;
 use wsp_chess::search::{Limits, Searcher};
 
@@ -17,11 +16,7 @@ fn incremental_equals_refresh() {
         "3qk3/2P5/8/8/8/8/7p/R3K3 w Q - 0 1",
         "8/2k5/3p4/p2P1p2/P2P1P2/8/3K4/8 w - - 0 1",
     ] {
-        let position: Chess = fen
-            .parse::<Fen>()
-            .unwrap()
-            .into_position(CastlingMode::Standard)
-            .unwrap();
+        let position = Position::from_fen(fen).unwrap();
         engine.new_game();
         engine.search(
             &position,

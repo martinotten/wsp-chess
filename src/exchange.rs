@@ -4,27 +4,28 @@
 //! ihrer jeweils billigsten Figur zurückschlagen und jede Seite aufhören darf, sobald Weiterschlagen
 //! schlechter wäre. Fesselungen werden nicht beachtet.
 
-use shakmaty::{Bitboard, Board, Chess, Color, Move, Position, Role, Square};
+use crate::board::{Color, Move, Piece, Position, Square};
+use cozy_chess::BitBoard;
 
 /// Längste betrachtete Schlagfolge auf einem Feld.
 const MAX_EXCHANGE: usize = 32;
 
 /// Materialwert in cp (für Sortierung, Abtausch und Delta-Pruning).
 #[must_use]
-pub fn value(role: Role) -> i32 {
+pub fn value(role: Piece) -> i32 {
     match role {
-        Role::Pawn => 100,
-        Role::Knight | Role::Bishop => 300,
-        Role::Rook => 500,
-        Role::Queen => 900,
-        Role::King => 20_000,
+        Piece::Pawn => 100,
+        Piece::Knight | Piece::Bishop => 300,
+        Piece::Rook => 500,
+        Piece::Queen => 900,
+        Piece::King => 20_000,
     }
 }
 
 /// Wert der geschlagenen Figur in cp (0 für Züge ohne Schlag).
 pub(crate) fn victim_value(mv: Move) -> i32 {
     if mv.is_en_passant() {
-        value(Role::Pawn)
+        value(Piece::Pawn)
     } else {
         mv.capture().map_or(0, value)
     }
@@ -32,10 +33,8 @@ pub(crate) fn victim_value(mv: Move) -> i32 {
 
 /// Abtauschbilanz eines Schlags in cp aus Sicht des Ziehenden; 0 für Züge ohne Schlag.
 #[must_use]
-pub fn see(pos: &Chess, mv: Move) -> i32 {
-    let (Some(from), victim) = (mv.from(), victim_value(mv)) else {
-        return 0;
-    };
+pub fn see(pos: &Position, mv: Move) -> i32 {
+    let (from, victim) = (mv.from(), victim_value(mv));
     if victim == 0 {
         return 0;
     }
@@ -45,13 +44,11 @@ pub fn see(pos: &Chess, mv: Move) -> i32 {
 }
 
 /// Ruhiger Zug: steht die Figur auf dem Zielfeld angegriffen und ungedeckt, gilt sie als verloren.
-pub(crate) fn see_quiet(pos: &Chess, mv: Move) -> i32 {
-    let Some(from) = mv.from() else { return 0 };
-    let board = pos.board();
+pub(crate) fn see_quiet(pos: &Position, mv: Move) -> i32 {
     let (us, them) = (pos.turn(), !pos.turn());
-    let occ = board.occupied().without(from);
-    let attacked = (board.attacks_to(mv.to(), them, occ) & board.by_color(them)).any();
-    let defended = (board.attacks_to(mv.to(), us, occ) & board.by_color(us) & occ).any();
+    let occ = pos.board().occupied() & !mv.from().bitboard();
+    let attacked = !pos.attackers(mv.to(), them, occ).is_empty();
+    let defended = !(pos.attackers(mv.to(), us, occ) & occ).is_empty();
     if attacked && !defended {
         -value(mv.role())
     } else {
@@ -61,16 +58,15 @@ pub(crate) fn see_quiet(pos: &Chess, mv: Move) -> i32 {
 
 /// Spielt die Schlagfolge auf dem Zielfeld durch. `gains[k]` ist die Bilanz der Seite, die den
 /// k-ten Schlag ausführt, falls danach niemand mehr schlägt. Gibt den Index des letzten Schlags zurück.
-fn speculative_gains(pos: &Chess, mv: Move, from: Square, gains: &mut [i32; MAX_EXCHANGE]) -> usize {
-    let board = pos.board();
+fn speculative_gains(pos: &Position, mv: Move, from: Square, gains: &mut [i32; MAX_EXCHANGE]) -> usize {
     let target = mv.to();
-    let mut occ = occupancy_after(board, mv, from);
+    let mut occ = occupancy_after(pos, mv, from);
     let mut on_target = mv.role();
     let mut side = !pos.turn();
     let mut last: usize = 0;
     gains[0] = victim_value(mv);
-    while let Some((role, sq)) = least_valuable_attacker(board, target, side, occ) {
-        if on_target == Role::King {
+    while let Some((role, sq)) = least_valuable_attacker(pos, target, side, occ) {
+        if on_target == Piece::King {
             // Der König hat auf ein noch angegriffenes Feld geschlagen: unzulässig, Schlag zurücknehmen
             last = last.saturating_sub(1);
             break;
@@ -81,17 +77,17 @@ fn speculative_gains(pos: &Chess, mv: Move, from: Square, gains: &mut [i32; MAX_
         last += 1;
         gains[last] = value(on_target) - gains[last - 1];
         on_target = role;
-        occ = occ.without(sq);
+        occ &= !sq.bitboard();
         side = !side;
     }
     last
 }
 
 /// Belegung nach dem ersten Schlag ohne die schlagende Figur; en passant auch ohne den geschlagenen Bauern.
-fn occupancy_after(board: &Board, mv: Move, from: Square) -> Bitboard {
-    let occ = board.occupied().without(from);
+fn occupancy_after(pos: &Position, mv: Move, from: Square) -> BitBoard {
+    let occ = pos.board().occupied() & !from.bitboard();
     if mv.is_en_passant() {
-        occ.without(Square::from_coords(mv.to().file(), from.rank()))
+        occ & !Square::new(mv.to().file(), from.rank()).bitboard()
     } else {
         occ
     }
@@ -99,15 +95,17 @@ fn occupancy_after(board: &Board, mv: Move, from: Square) -> Bitboard {
 
 /// Billigste Figur von `side`, die `target` bei Belegung `occ` angreift (Röntgenangriffe eingeschlossen).
 fn least_valuable_attacker(
-    board: &Board,
+    pos: &Position,
     target: Square,
     side: Color,
-    occ: Bitboard,
-) -> Option<(Role, Square)> {
-    let attackers = board.attacks_to(target, side, occ) & occ & board.by_color(side);
-    Role::ALL
-        .iter()
-        .find_map(|&role| (attackers & board.by_role(role)).first().map(|sq| (role, sq)))
+    occ: BitBoard,
+) -> Option<(Piece, Square)> {
+    let attackers = pos.attackers(target, side, occ) & occ;
+    Piece::ALL.iter().find_map(|&role| {
+        (attackers & pos.board().pieces(role))
+            .next_square()
+            .map(|sq| (role, sq))
+    })
 }
 
 /// Wertet die Schlagfolge rückwärts aus: Jede Seite hört auf, wenn Weiterschlagen schlechter wäre.
@@ -121,17 +119,10 @@ fn best_outcome(gains: &mut [i32; MAX_EXCHANGE], last: usize) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use shakmaty::fen::Fen;
-    use shakmaty::uci::UciMove;
-    use shakmaty::CastlingMode;
 
-    fn play(fen: &str, uci: &str) -> (Chess, Move) {
-        let pos: Chess = fen
-            .parse::<Fen>()
-            .unwrap()
-            .into_position(CastlingMode::Standard)
-            .unwrap();
-        let mv = uci.parse::<UciMove>().unwrap().to_move(&pos).unwrap();
+    fn play(fen: &str, uci: &str) -> (Position, Move) {
+        let pos = Position::from_fen(fen).unwrap();
+        let mv = pos.parse_uci(uci).unwrap();
         (pos, mv)
     }
 

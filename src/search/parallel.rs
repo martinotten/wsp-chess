@@ -7,7 +7,7 @@
 //! - das Helferflag [`Team::halt`] setzt nur [`search_parallel`], sobald der Hauptthread fertig ist.
 
 use super::{Info, Limits, Searcher};
-use shakmaty::{Chess, Move};
+use crate::board::{Move, Position};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -44,7 +44,7 @@ impl Team {
 pub fn search_parallel(
     main: &mut Searcher,
     helpers: &mut [Searcher],
-    pos: &Chess,
+    pos: &Position,
     game: &[u64],
     lim: Limits,
     on_depth: impl FnMut(&Info),

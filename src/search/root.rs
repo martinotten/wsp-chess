@@ -2,7 +2,7 @@
 
 use super::node::{Node, Window};
 use super::{hash, move_code, Feature, Info, Limits, Searcher, Team, INF, MATE, MATE_BOUND, MAX_PLY};
-use shakmaty::{Chess, Move, Position};
+use crate::board::{Move, Position};
 
 /// Größte Iterationstiefe.
 const MAX_DEPTH: i32 = 100;
@@ -28,7 +28,7 @@ impl Searcher {
     /// aktuelle), für Wiederholungen. `on_depth` wird nach jeder fertigen Iteration aufgerufen.
     pub fn search(
         &mut self,
-        pos: &Chess,
+        pos: &Position,
         game: &[u64],
         lim: Limits,
         on_depth: impl FnMut(&Info),
@@ -46,7 +46,7 @@ impl Searcher {
     /// Iterative Vertiefung des Hauptthreads (liefert Zug und Bericht).
     pub(super) fn search_main(
         &mut self,
-        pos: &Chess,
+        pos: &Position,
         game: &[u64],
         lim: Limits,
         team: &Team,
@@ -73,7 +73,7 @@ impl Searcher {
     /// tiefer, damit nicht alle Threads dieselbe Tiefe rechnen. Ergebnis nur über die Tabelle.
     pub(super) fn search_helper(
         &mut self,
-        pos: &Chess,
+        pos: &Position,
         game: &[u64],
         lim: Limits,
         team: &Team,
@@ -112,7 +112,7 @@ impl Searcher {
     }
 
     /// Suchpfad für die Wiederholungserkennung: frühere Stellungen der Partie, dann die Wurzel.
-    fn begin_path(&mut self, pos: &Chess, game: &[u64]) -> u64 {
+    fn begin_path(&mut self, pos: &Position, game: &[u64]) -> u64 {
         let root_key = hash(pos);
         self.path.clear();
         self.path.extend_from_slice(game);
@@ -121,7 +121,7 @@ impl Searcher {
     }
 
     /// Startstand mit dem Rückfallzug; `None`, wenn es keinen legalen Zug gibt.
-    fn fallback(&mut self, pos: &Chess) -> Option<Deepening> {
+    fn fallback(&mut self, pos: &Position) -> Option<Deepening> {
         let (best, score) = self.one_ply_best(pos)?;
         let info = Info {
             score,
@@ -133,7 +133,7 @@ impl Searcher {
 
     /// Rückfall, falls nicht einmal Tiefe 1 fertig wird: bester Zug nach Netz (ein Halbzug). Nach dem
     /// ersten Zug ist ein legaler Zug gesichert; danach wird vor jeder Bewertung der Stopp geprüft.
-    fn one_ply_best(&mut self, pos: &Chess) -> Option<(Move, i32)> {
+    fn one_ply_best(&mut self, pos: &Position) -> Option<(Move, i32)> {
         let mut best: Option<(Move, i32)> = None;
         for mv in pos.legal_moves() {
             if best.is_some() && self.should_stop(self.team_nodes()) {
@@ -158,7 +158,7 @@ impl Searcher {
     }
 
     /// Durchsucht eine Tiefe und übernimmt ihr Ergebnis; `false`, wenn die Suche abgebrochen wurde.
-    fn complete_depth(&mut self, pos: &Chess, depth: i32, root_key: u64, state: &mut Deepening) -> bool {
+    fn complete_depth(&mut self, pos: &Position, depth: i32, root_key: u64, state: &mut Deepening) -> bool {
         self.root_depth = depth;
         self.root_best = None;
         let Some(score) = self.iterate(pos, depth, state.info.score, root_key) else {
@@ -177,7 +177,7 @@ impl Searcher {
     /// Eine Iteration mit Aspiration-Fenster um `expected` (Wert der vorigen Tiefe); `None` bei
     /// Abbruch. Fällt der Wert aus dem Fenster, wird es auf dieser Seite verdoppelt und ab
     /// [`ASPIRATION_MAX_DELTA`] ganz geöffnet.
-    fn iterate(&mut self, pos: &Chess, depth: i32, expected: i32, root_key: u64) -> Option<i32> {
+    fn iterate(&mut self, pos: &Position, depth: i32, expected: i32, root_key: u64) -> Option<i32> {
         let mut delta = ASPIRATION_DELTA;
         let narrow =
             self.opts.on(Feature::Aspiration) && depth >= ASPIRATION_MIN_DEPTH && expected.abs() < MATE_BOUND;
@@ -214,7 +214,7 @@ impl Searcher {
         }
     }
 
-    fn iteration_info(&self, pos: &Chess, depth: i32, score: i32, best: Move) -> Info {
+    fn iteration_info(&self, pos: &Position, depth: i32, score: i32, best: Move) -> Info {
         Info {
             depth,
             seldepth: self.seldepth,
@@ -228,7 +228,7 @@ impl Searcher {
     }
 
     /// Hauptvariante aus der Transpositionstabelle, höchstens `max_len` Züge, ohne Wiederholungen.
-    fn pv(&self, pos: &Chess, first: Move, max_len: usize) -> Vec<Move> {
+    fn pv(&self, pos: &Position, first: Move, max_len: usize) -> Vec<Move> {
         let mut line = vec![first];
         let mut current = pos.clone();
         current.play_unchecked(first);
@@ -253,7 +253,7 @@ impl Searcher {
     }
 
     /// Legaler Zug zur Kodierung `code` (siehe [`move_code`]); `None` für 0 oder unbekannte Züge.
-    fn find(pos: &Chess, code: u16) -> Option<Move> {
+    fn find(pos: &Position, code: u16) -> Option<Move> {
         if code == 0 {
             return None;
         }

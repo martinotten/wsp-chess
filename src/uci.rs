@@ -5,12 +5,10 @@
 //! Zusätzliche Befehle (nicht UCI): `eval` (statische Bewertung in Bauern), `perft <n>`
 //! (Zuggenerator-Test), `bench [tiefe]` (feste Tiefe auf festen Stellungen: Knotenzahl und Tempo).
 
+use crate::board::{Color, Position};
 use crate::eval::Net;
 use crate::search::{self, search_parallel, Feature, Limits, Opts, Searcher};
 use crate::tt::Tt;
-use shakmaty::fen::Fen;
-use shakmaty::uci::UciMove;
-use shakmaty::{CastlingMode, Chess, Color, Position};
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
@@ -64,18 +62,15 @@ fn default_weights() -> String {
 }
 
 /// Liest eine Stellung aus FEN und optionaler Zugfolge.
-fn parse_fen(fen: &str) -> Option<Chess> {
-    fen.parse::<Fen>()
-        .ok()?
-        .into_position(CastlingMode::Standard)
-        .ok()
+fn parse_fen(fen: &str) -> Option<Position> {
+    Position::from_fen(fen)
 }
 
 /// `position startpos|fen ... [moves ...]` -> Stellung und Schlüssel der früheren Stellungen.
 #[must_use]
-pub fn parse_position(args: &[&str]) -> Option<(Chess, Vec<u64>)> {
+pub fn parse_position(args: &[&str]) -> Option<(Position, Vec<u64>)> {
     let (mut pos, rest) = match *args.first()? {
-        "startpos" => (Chess::default(), &args[1..]),
+        "startpos" => (Position::default(), &args[1..]),
         "fen" => {
             let moves_at = args.iter().position(|arg| *arg == "moves").unwrap_or(args.len());
             (parse_fen(&args[1..moves_at].join(" "))?, &args[moves_at..])
@@ -85,7 +80,7 @@ pub fn parse_position(args: &[&str]) -> Option<(Chess, Vec<u64>)> {
     let mut hist = vec![];
     if rest.first() == Some(&"moves") {
         for text in &rest[1..] {
-            let mv = text.parse::<UciMove>().ok()?.to_move(&pos).ok()?;
+            let mv = pos.parse_uci(text)?;
             hist.push(search::hash(&pos));
             pos.play_unchecked(mv);
         }
@@ -150,7 +145,7 @@ pub fn score_str(score: i32) -> String {
 
 /// Zahl der Blätter in Tiefe `d` (Zuggenerator-Test).
 #[must_use]
-pub fn perft(pos: &Chess, depth: u32) -> u64 {
+pub fn perft(pos: &Position, depth: u32) -> u64 {
     if depth == 0 {
         return 1;
     }
@@ -184,7 +179,7 @@ pub struct Engine {
     hash_mb: usize,
     threads: usize,
     opts: Opts,
-    pos: Chess,
+    pos: Position,
     hist: Vec<u64>,
     infinite: bool,
 }
@@ -202,7 +197,7 @@ impl Engine {
             hash_mb: 64,
             threads: 1,
             opts: Opts::default(),
-            pos: Chess::default(),
+            pos: Position::default(),
             hist: vec![],
             infinite: false,
         }
@@ -408,7 +403,7 @@ impl Engine {
                         searcher.new_game();
                     }
                 }
-                self.pos = Chess::default();
+                self.pos = Position::default();
                 self.hist.clear();
             }
             "position" => {

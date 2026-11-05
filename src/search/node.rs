@@ -1,7 +1,7 @@
 //! Suchfenster und Knotendaten der Suche.
 
 use super::INF;
-use shakmaty::Move;
+use crate::board::Move;
 
 /// Suchfenster.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

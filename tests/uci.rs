@@ -61,7 +61,7 @@ fn stop_ends_infinite_search() {
 
 #[test]
 fn time_management() {
-    use shakmaty::Color;
+    use wsp_chess::board::Color;
     let limits = parse_go(&["movetime", "100"], Color::White);
     assert_eq!(limits.movetime.unwrap().as_millis(), 95);
     let clock = parse_go(&["wtime", "60000", "btime", "1000", "winc", "0"], Color::Black);
@@ -74,7 +74,10 @@ fn time_management() {
 fn position_history_and_scores() {
     let (_, hist) = parse_position(&["startpos", "moves", "g1f3", "g8f6", "f3g1", "f6g8"]).unwrap();
     assert_eq!(hist.len(), 4);
-    assert_eq!(hist[0], wsp_chess::search::hash(&shakmaty::Chess::default()));
+    assert_eq!(
+        hist[0],
+        wsp_chess::search::hash(&wsp_chess::board::Position::default())
+    );
     assert!(parse_position(&["startpos", "moves", "e2e5"]).is_none());
     assert_eq!(score_str(MATE - 1), "mate 1");
     assert_eq!(score_str(-(MATE - 2)), "mate -1");

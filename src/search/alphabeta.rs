@@ -3,8 +3,8 @@
 use super::node::{Best, Candidate, Node, Plan, QNode, TtProbe, Window};
 use super::score::{bound_for, from_tt, mated_in, ply_i32, to_tt};
 use super::{hash, is_quiet, move_code, Feature, Searcher, INF, MATE_BOUND, MAX_PLY};
+use crate::board::{Move, MoveList, Piece, Position};
 use crate::tt::{Bound, Entry};
-use shakmaty::{Chess, Move, MoveList, Position};
 
 /// Halbzüge ohne Schlag oder Bauernzug bis zum Remis (50-Züge-Regel).
 const FIFTY_MOVE_PLIES: u32 = 100;
@@ -25,14 +25,14 @@ const LMR_DEEP_DEPTH: i32 = 6;
 const LMR_DEEP_INDEX: usize = 6;
 
 /// Hat der Ziehende Figuren außer Bauern und König? Sonst droht Zugzwang, und der Nullzug täuscht.
-fn non_pawn_material(pos: &Chess) -> bool {
+fn non_pawn_material(pos: &Position) -> bool {
     let board = pos.board();
-    (board.by_color(pos.turn()) & !(board.pawns() | board.kings())).any()
+    !(board.colors(pos.turn()) & !(board.pieces(Piece::Pawn) | board.pieces(Piece::King))).is_empty()
 }
 
 impl Searcher {
     /// Negamax mit Alpha-Beta: Wert der Stellung aus Sicht des Ziehenden bei Resttiefe `depth`.
-    pub(super) fn negamax(&mut self, pos: &Chess, depth: i32, win: Window, node: Node) -> i32 {
+    pub(super) fn negamax(&mut self, pos: &Position, depth: i32, win: Window, node: Node) -> i32 {
         if !self.enter(node.ply) {
             return 0;
         }
@@ -92,12 +92,12 @@ impl Searcher {
     }
 
     /// Remis durch ungenügendes Material oder Wiederholung (nicht an der Wurzel prüfen).
-    fn is_draw(&self, pos: &Chess, key: u64) -> bool {
+    fn is_draw(&self, pos: &Position, key: u64) -> bool {
         pos.is_insufficient_material() || self.is_repetition(key, pos.halfmoves())
     }
 
     /// Wert ohne Suche: Matt, Patt, 50-Züge-Regel oder größte Suchhöhe erreicht.
-    pub(super) fn leaf_score(&mut self, pos: &Chess, moves: &MoveList, ply: usize) -> Option<i32> {
+    pub(super) fn leaf_score(&mut self, pos: &Position, moves: &MoveList, ply: usize) -> Option<i32> {
         if moves.is_empty() {
             return Some(if pos.is_check() { mated_in(ply) } else { 0 });
         }
@@ -143,7 +143,7 @@ impl Searcher {
     /// Nullzug-Pruning, wo erlaubt; gibt den Schnittwert zurück.
     fn try_null_move(
         &mut self,
-        pos: &Chess,
+        pos: &Position,
         depth: i32,
         win: Window,
         node: Node,
@@ -165,8 +165,8 @@ impl Searcher {
 
     /// Nullzug: Darf der Gegner zweimal ziehen und reicht es trotzdem für beta, gilt die Stellung als
     /// zu gut. Gibt den Schnittwert zurück oder `None`.
-    fn null_move(&mut self, pos: &Chess, depth: i32, beta: i32, node: Node) -> Option<i32> {
-        let child = pos.clone().swap_turn().ok()?;
+    fn null_move(&mut self, pos: &Position, depth: i32, beta: i32, node: Node) -> Option<i32> {
+        let child = pos.null_move()?;
         let reduction = NULL_REDUCTION + i32::from(depth >= NULL_DEEP_DEPTH);
         self.path.push(0);
         let key = hash(&child);
@@ -194,7 +194,13 @@ impl Searcher {
     }
 
     /// Durchsucht alle Züge eines Knotens und hebt `win.alpha` an; `None` bei Abbruch.
-    fn search_moves(&mut self, pos: &Chess, moves: &[Move], plan: &Plan, win: &mut Window) -> Option<Best> {
+    fn search_moves(
+        &mut self,
+        pos: &Position,
+        moves: &[Move],
+        plan: &Plan,
+        win: &mut Window,
+    ) -> Option<Best> {
         let mut best = Best { score: -INF, code: 0 };
         let ordered = self.sorted(pos, moves, plan.tt_move, plan.node.ply);
         for (index, mv) in ordered.into_iter().enumerate() {
@@ -236,7 +242,7 @@ impl Searcher {
     }
 
     /// Wert eines Kindknotens aus Sicht des Ziehenden.
-    fn search_child(&mut self, child: &Chess, candidate: &Candidate, plan: &Plan, win: Window) -> i32 {
+    fn search_child(&mut self, child: &Position, candidate: &Candidate, plan: &Plan, win: Window) -> i32 {
         let key = hash(child);
         self.path.push(key);
         let node = plan.node.child(key);
@@ -253,7 +259,7 @@ impl Searcher {
     /// alpha übertrifft, ohne Reduktion und dann mit vollem Fenster nachsuchen.
     fn search_late_move(
         &mut self,
-        child: &Chess,
+        child: &Position,
         candidate: &Candidate,
         plan: &Plan,
         win: Window,

@@ -3,13 +3,13 @@
 use super::node::{QNode, Window};
 use super::score::mated_in;
 use super::{is_quiet, Feature, Searcher, INF, MAX_PLY};
+use crate::board::{Move, MoveList, Position};
 use crate::exchange::{see, see_quiet, victim_value};
-use shakmaty::{Chess, Move, MoveList, Position};
 
 /// Delta-Pruning: Sicherheitsabstand in cp.
 const DELTA_MARGIN: i32 = 200;
 
-fn gives_check(pos: &Chess, mv: Move) -> bool {
+fn gives_check(pos: &Position, mv: Move) -> bool {
     let mut child = pos.clone();
     child.play_unchecked(mv);
     child.is_check()
@@ -17,7 +17,7 @@ fn gives_check(pos: &Chess, mv: Move) -> bool {
 
 impl Searcher {
     /// Ruhesuche: nur Schläge und Umwandlungen (im Schach alle Züge), bis die Stellung ruhig ist.
-    pub(super) fn qsearch(&mut self, pos: &Chess, mut win: Window, at: QNode) -> i32 {
+    pub(super) fn qsearch(&mut self, pos: &Position, mut win: Window, at: QNode) -> i32 {
         let ply = at.ply;
         if !self.enter(ply) {
             return 0;
@@ -43,7 +43,7 @@ impl Searcher {
     }
 
     /// Ruhesuche im Schach: alle Abwehrzüge, kein Stand-pat.
-    fn qsearch_evasions(&mut self, pos: &Chess, win: Window, at: QNode) -> i32 {
+    fn qsearch_evasions(&mut self, pos: &Position, win: Window, at: QNode) -> i32 {
         let moves = pos.legal_moves();
         if moves.is_empty() {
             return mated_in(at.ply);
@@ -52,9 +52,8 @@ impl Searcher {
     }
 
     /// Schläge, ruhige Umwandlungen und (mit [`Feature::QChecks`], erste Ebene) sichere Schachgebote.
-    fn quiescence_moves(&self, pos: &Chess, qdepth: u32) -> MoveList {
-        let mut moves = pos.capture_moves();
-        moves.extend(pos.promotion_moves().into_iter().filter(|mv| !mv.is_capture()));
+    fn quiescence_moves(&self, pos: &Position, qdepth: u32) -> MoveList {
+        let mut moves = pos.noisy_moves();
         if qdepth == 0 && self.opts.on(Feature::QChecks) {
             moves.extend(
                 pos.legal_moves()
@@ -68,7 +67,7 @@ impl Searcher {
     /// Durchsucht die Züge der Ruhesuche. `stand` = Stand-pat-Wert, `None` im Schach.
     fn qsearch_moves(
         &mut self,
-        pos: &Chess,
+        pos: &Position,
         moves: &[Move],
         mut win: Window,
         at: QNode,
@@ -99,7 +98,7 @@ impl Searcher {
 
     /// Schlag, der in der Ruhesuche nicht lohnt: Selbst der Gewinn der Figur hebt den Wert nicht über
     /// alpha (Delta-Pruning), oder der Abtausch verliert Material (SEE).
-    fn skip_capture(&self, pos: &Chess, mv: Move, stand: i32, alpha: i32) -> bool {
+    fn skip_capture(&self, pos: &Position, mv: Move, stand: i32, alpha: i32) -> bool {
         if mv.is_promotion() || !mv.is_capture() {
             return false;
         }

@@ -5,11 +5,10 @@
 //! verschiebt, ändert die Knotenzahl. Ein reiner Umbau muss diesen Test also unverändert bestehen.
 //! Bei gewollter Verhaltensänderung neu schreiben: `GOLDEN_UPDATE=1 cargo test --release --test golden`.
 #![expect(clippy::unwrap_used, reason = "Test: Fehlschlag soll den Test abbrechen")]
-use shakmaty::fen::Fen;
-use shakmaty::{CastlingMode, Chess};
 use std::fmt::Write;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use wsp_chess::board::Position;
 use wsp_chess::eval::Net;
 use wsp_chess::search::{self, Feature, Limits, Opts, Searcher};
 use wsp_chess::uci::BENCH;
@@ -35,11 +34,7 @@ fn fingerprint() -> String {
     for (name, opts) in configs() {
         engine.opts = opts;
         for fen in BENCH {
-            let pos: Chess = fen
-                .parse::<Fen>()
-                .unwrap()
-                .into_position(CastlingMode::Standard)
-                .unwrap();
+            let pos = Position::from_fen(fen).unwrap();
             engine.new_game();
             let lim = Limits {
                 depth: Some(DEPTH),

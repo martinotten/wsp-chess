@@ -28,12 +28,11 @@ mod tests;
 pub use options::{Feature, Info, Limits, Opts};
 pub use parallel::{search_parallel, Team};
 
+use crate::board::{Color, Move, Position};
 use crate::eval::Net;
 use crate::tt::Tt;
+use cozy_chess::Board;
 use score::to_cp;
-use shakmaty::uci::UciMove;
-use shakmaty::zobrist::Zobrist64;
-use shakmaty::{Board, CastlingMode, Chess, Color, EnPassantMode, File, Move, Position, Square};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -55,32 +54,21 @@ const TICK_SHIFT: u32 = 10;
 
 /// Zobrist-Schlüssel der Stellung.
 #[must_use]
-pub fn hash(pos: &Chess) -> u64 {
-    pos.zobrist_hash::<Zobrist64>(EnPassantMode::Legal).0
+pub fn hash(pos: &Position) -> u64 {
+    pos.hash()
 }
 
 /// Zug als 16 Bit: von | nach << 6 | Umwandlung << 12 (Rochade: Zielfeld des Königs). 0 = kein Zug.
 #[must_use]
 pub fn move_code(mv: Move) -> u16 {
-    let (from, to) = match mv {
-        Move::Castle { king, rook } => {
-            let king_file = if rook.file() > king.file() {
-                File::G
-            } else {
-                File::C
-            };
-            (king, Square::from_coords(king_file, king.rank()))
-        }
-        _ => (mv.from().unwrap_or(mv.to()), mv.to()),
-    };
-    let promo = mv.promotion().map_or(0, u16::from);
-    u16::from(from) | u16::from(to) << 6 | promo << 12
+    let promo = mv.promotion().map_or(0, |piece| piece as u16);
+    mv.from() as u16 | (mv.to() as u16) << 6 | promo << 12
 }
 
 /// Zug in UCI-Schreibweise (Rochade als Königszug).
 #[must_use]
 pub fn uci(mv: Move) -> String {
-    UciMove::from_move(mv, CastlingMode::Standard).to_string()
+    mv.uci()
 }
 
 fn is_quiet(mv: Move) -> bool {
@@ -192,7 +180,7 @@ impl Searcher {
     /// Statische Bewertung in cp, Sicht des Spielers am Zug. Der Akkumulator wird vom zuletzt auf
     /// dieser Höhe bewerteten Brett (meist ein Geschwisterknoten) oder vom zwei Halbzüge höheren
     /// (gleiche Perspektive) nachgeführt und nur bei großem Unterschied neu berechnet.
-    pub fn eval(&mut self, pos: &Chess, ply: usize) -> i32 {
+    pub fn eval(&mut self, pos: &Position, ply: usize) -> i32 {
         self.evals += 1;
         let persp = pos.turn();
         let ply = ply.min(MAX_PLY + 1);

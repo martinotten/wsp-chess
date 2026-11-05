@@ -1,9 +1,7 @@
 //! Rust-Bewertung gegen die Python-Sollwerte aus `export_rs.py` (`weights_check.json`).
 #![expect(clippy::unwrap_used, reason = "Test: Fehlschlag soll den Test abbrechen")]
 use serde_json::Value;
-use shakmaty::fen::Fen;
-use shakmaty::uci::UciMove;
-use shakmaty::{CastlingMode, Chess, Position};
+use wsp_chess::board::Position;
 use wsp_chess::eval::Net;
 use wsp_chess::exchange::see;
 use wsp_chess::search;
@@ -13,11 +11,8 @@ fn net() -> Net {
     Net::load("weights/weights.bin").unwrap()
 }
 
-fn pos(fen: &str) -> Chess {
-    fen.parse::<Fen>()
-        .unwrap()
-        .into_position(CastlingMode::Standard)
-        .unwrap()
+fn pos(fen: &str) -> Position {
+    Position::from_fen(fen).unwrap()
 }
 
 #[test]
@@ -41,8 +36,7 @@ fn eval_matches_python() {
             .collect();
         worst = worst.max((f64::from(net.score(&position)) - soll[0]).abs());
         for (ply, uci_text) in sequence["moves"].as_array().unwrap().iter().enumerate() {
-            let uci_move: UciMove = uci_text.as_str().unwrap().parse().unwrap();
-            let mv = uci_move.to_move(&position).unwrap();
+            let mv = position.parse_uci(uci_text.as_str().unwrap()).unwrap();
             position.play_unchecked(mv);
             let deviation = (f64::from(net.score(&position)) - soll[ply + 1]).abs();
             assert!(
@@ -79,9 +73,30 @@ fn see_values() {
 
 #[test]
 fn perft_reference() {
-    assert_eq!(perft(&Chess::default(), 5), 4_865_609);
+    assert_eq!(perft(&Position::default(), 5), 4_865_609);
     let kiwipete = pos("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1");
     assert_eq!(perft(&kiwipete, 4), 4_085_603);
+    // Stellungen 3 bis 6 aus dem Chess Programming Wiki (Perft Results)
+    for (fen, depth, nodes) in [
+        ("8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", 5, 674_624),
+        (
+            "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1",
+            4,
+            422_333,
+        ),
+        (
+            "rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8",
+            4,
+            2_103_487,
+        ),
+        (
+            "r4rk1/1pp1qppp/p1np1n2/2b1p1B1/2B1P1b1/P1NP1N2/1PP1QPPP/R4RK1 w - - 0 10",
+            4,
+            3_894_594,
+        ),
+    ] {
+        assert_eq!(perft(&pos(fen), depth), nodes, "{fen}");
+    }
 }
 
 #[test]

@@ -3,14 +3,11 @@ use super::alphabeta::{FUTILITY_MARGIN, FUTILITY_MAX_DEPTH};
 use super::node::{Candidate, Node, Plan, Window};
 use super::score::{bound_for, from_tt, mated_in, to_tt};
 use super::*;
+use crate::board::Square;
 use crate::tt::Bound;
-use shakmaty::fen::Fen;
 
-fn pos(fen: &str) -> Chess {
-    fen.parse::<Fen>()
-        .unwrap()
-        .into_position(CastlingMode::Standard)
-        .unwrap()
+fn pos(fen: &str) -> Position {
+    Position::from_fen(fen).unwrap()
 }
 
 fn searcher() -> Searcher {
@@ -18,7 +15,12 @@ fn searcher() -> Searcher {
     Searcher::new(net, 1, Arc::new(AtomicBool::new(false)))
 }
 
-fn search_depth(engine: &mut Searcher, position: &Chess, game: &[u64], depth: i32) -> (Option<Move>, Info) {
+fn search_depth(
+    engine: &mut Searcher,
+    position: &Position,
+    game: &[u64],
+    depth: i32,
+) -> (Option<Move>, Info) {
     let lim = Limits {
         depth: Some(depth),
         ..Limits::default()
@@ -66,8 +68,8 @@ fn move_encoding() {
         .unwrap();
     // Rochade wird als Königszug kodiert (e1g1 bzw. e1c1)
     let (from, to) = (move_code(castle) & 0x3f, (move_code(castle) >> 6) & 0x3f);
-    assert_eq!(from, u16::from(Square::E1));
-    assert!(to == u16::from(Square::G1) || to == u16::from(Square::C1));
+    assert_eq!(from, Square::E1 as u16);
+    assert!(to == Square::G1 as u16 || to == Square::C1 as u16);
     assert!(uci(castle) == "e1g1" || uci(castle) == "e1c1");
     let p_promo = pos("8/4P3/8/8/8/8/k7/4K3 w - - 0 1");
     let promo = p_promo
@@ -99,6 +101,18 @@ fn fifty_move_rule_makes_the_search_a_draw() {
     let fresh = pos("8/8/8/4k3/8/8/R7/4K3 w - - 0 80");
     let (_, fresh_info) = search_depth(&mut engine, &fresh, &[], 3);
     assert!(fresh_info.score > 300, "Turm mehr: {}", fresh_info.score);
+}
+
+#[test]
+fn insufficient_material_is_a_draw_and_mate_beats_the_fifty_move_rule() {
+    let mut engine = searcher();
+    // König und Läufer gegen König: Remis, egal wie tief
+    let (_, info) = search_depth(&mut engine, &pos("8/8/8/4k3/8/8/2B5/4K3 w - - 0 1"), &[], 4);
+    assert_eq!(info.score, 0);
+    // Ta8 setzt matt und erreicht zugleich die 50-Züge-Grenze: Matt hat Vorrang
+    let (best, mate_info) = search_depth(&mut engine, &pos("6k1/5ppp/8/8/8/8/8/R5K1 w - - 99 80"), &[], 3);
+    assert_eq!(best.map(uci).as_deref(), Some("a1a8"));
+    assert!(mate_info.score > MATE_BOUND, "{}", mate_info.score);
 }
 
 #[test]
@@ -197,7 +211,7 @@ fn node_limit_stops_the_search() {
         nodes: Some(5_000),
         ..Limits::default()
     };
-    let (best, info) = engine.search(&Chess::default(), &[], lim, |_| {});
+    let (best, info) = engine.search(&Position::default(), &[], lim, |_| {});
     assert!(best.is_some());
     assert!(info.nodes < 5_000 + (1 << TICK_SHIFT), "{}", info.nodes);
 }

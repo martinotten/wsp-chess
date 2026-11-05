@@ -6,6 +6,7 @@
 //! - [`tt`] – Transpositionstabelle
 //! - [`uci`] – UCI-Protokoll
 
+pub mod board;
 pub mod eval;
 pub mod exchange;
 pub mod search;

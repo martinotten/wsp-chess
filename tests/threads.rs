@@ -1,12 +1,11 @@
 //! Mehrere Suchthreads und Stoppsignale über UCI und direkt über `search_parallel`.
 #![expect(clippy::unwrap_used, reason = "Test: Fehlschlag soll den Test abbrechen")]
-use shakmaty::uci::UciMove;
-use shakmaty::{Chess, Position};
 use std::io::Write;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
+use wsp_chess::board::Position;
 use wsp_chess::eval::Net;
 use wsp_chess::search::{search_parallel, Limits, Searcher};
 use wsp_chess::tt::Tt;
@@ -51,7 +50,7 @@ fn engine(threads: usize) -> (Engine, Buf) {
 fn is_legal(position_args: &str, text: &str) -> bool {
     let args: Vec<&str> = position_args.split_whitespace().collect();
     let (pos, _) = parse_position(&args).unwrap();
-    text.parse::<UciMove>().is_ok_and(|mv| mv.to_move(&pos).is_ok())
+    pos.parse_uci(text).is_some()
 }
 
 const POSITION: &str = "startpos moves e2e4 e7e5 g1f3";
@@ -147,8 +146,8 @@ fn stop_flag_set_before_the_search() {
         .map(|_| Searcher::with_table(Arc::clone(&net), Arc::clone(&tt), Arc::clone(&stop)))
         .collect();
     let (main, helpers) = searchers.split_first_mut().unwrap();
-    let pos = Chess::default();
+    let pos = Position::default();
     let (best, _) = search_parallel(main, helpers, &pos, &[], Limits::default(), |_| {});
     let best = best.unwrap();
-    assert!(pos.is_legal(best));
+    assert!(pos.legal_moves().contains(&best));
 }

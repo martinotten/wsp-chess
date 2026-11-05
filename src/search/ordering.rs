@@ -1,8 +1,8 @@
 //! Zugsortierung: TT-Zug, Schläge nach MVV-LVA, Killerzüge, History.
 
 use super::{is_quiet, move_code, Feature, Searcher};
+use crate::board::{Color, Move, Position};
 use crate::exchange::{value, victim_value};
-use shakmaty::{Chess, Color, Move, Position};
 
 /// Zugsortierung: Rangstufen (TT-Zug vor Schlägen vor Killern vor History).
 const ORDER_TT_MOVE: i32 = 10_000_000;
@@ -40,7 +40,7 @@ impl Searcher {
         0
     }
 
-    pub(super) fn sorted(&self, pos: &Chess, moves: &[Move], tt_move: u16, ply: usize) -> Vec<Move> {
+    pub(super) fn sorted(&self, pos: &Position, moves: &[Move], tt_move: u16, ply: usize) -> Vec<Move> {
         let turn = pos.turn();
         let mut ranked: Vec<(i32, Move)> = moves
             .iter()

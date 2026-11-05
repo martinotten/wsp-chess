@@ -7,7 +7,8 @@
 //! Der Eingabeteil (Biases plus Beiträge aller gesetzten Eingabebits zu allen Zielen) heißt
 //! Akkumulator. Er lässt sich mit [`Net::update`] von einem Brett auf ein anderes nachführen.
 
-use shakmaty::{Board, Color, Piece, Position, Role, Square};
+use crate::board::{Color, Piece, Position, Square};
+use cozy_chess::Board;
 use std::fmt;
 
 /// Zahl der Eingabebits (12 Figurenarten × 64 Felder).
@@ -56,15 +57,10 @@ pub struct Net {
 /// Eingabeindex wie `features.xi` in Python: `(Seite*6 + Typ)*64 + Feld`, Sicht `persp`
 /// (Seite 0 = Figuren von `persp`; ist `persp` Schwarz, wird das Brett vertikal gespiegelt).
 #[must_use]
-pub fn feature(persp: Color, piece: Piece, sq: Square) -> usize {
-    let side = usize::from(piece.color != persp);
-    let role = usize::from(piece.role) - 1;
-    let seen_sq = if persp == Color::Black {
-        sq.flip_vertical()
-    } else {
-        sq
-    };
-    (side * 6 + role) * 64 + seen_sq.to_usize()
+pub fn feature(persp: Color, color: Color, role: Piece, sq: Square) -> usize {
+    let side = usize::from(color != persp);
+    let seen_sq = if persp == Color::Black { sq.flip_rank() } else { sq };
+    (side * 6 + role as usize) * 64 + seen_sq as usize
 }
 
 /// Ruft `visit(index, activation)` für alle positiven Werte auf; Blöcke zu 16 Werten werden zuerst
@@ -233,8 +229,11 @@ impl Net {
     /// Akkumulator für eine Perspektive von Grund auf.
     pub fn refresh(&self, board: &Board, persp: Color, acc: &mut [f32]) {
         acc.copy_from_slice(&self.bias);
-        for (sq, piece) in board {
-            self.add_row(feature(persp, piece, sq), 1.0, acc, 0);
+        // aufsteigende Felder: feste Summationsreihenfolge, damit Werte bitgleich reproduzierbar sind
+        for sq in board.occupied() {
+            if let (Some(color), Some(role)) = (board.color_on(sq), board.piece_on(sq)) {
+                self.add_row(feature(persp, color, role, sq), 1.0, acc, 0);
+            }
         }
     }
 
@@ -251,18 +250,17 @@ impl Net {
     ) -> bool {
         buf.clear();
         for color in Color::ALL {
-            for role in Role::ALL {
-                let piece = Piece { color, role };
-                let (before, after) = (from.by_piece(piece), to.by_piece(piece));
+            for role in Piece::ALL {
+                let (before, after) = (from.colored_pieces(color, role), to.colored_pieces(color, role));
                 buf.extend(
                     (before & !after)
                         .into_iter()
-                        .map(|sq| (feature(persp, piece, sq), -1.0)),
+                        .map(|sq| (feature(persp, color, role, sq), -1.0)),
                 );
                 buf.extend(
                     (after & !before)
                         .into_iter()
-                        .map(|sq| (feature(persp, piece, sq), 1.0)),
+                        .map(|sq| (feature(persp, color, role, sq), 1.0)),
                 );
                 if buf.len() > MAX_CHANGES {
                     return false;
@@ -296,7 +294,7 @@ impl Net {
 
     /// Bewertung ohne Akkumulator (Referenz für Tests und den Befehl `eval`).
     #[must_use]
-    pub fn score<P: Position>(&self, pos: &P) -> f32 {
+    pub fn score(&self, pos: &Position) -> f32 {
         let mut acc = vec![0.0; self.n_targets()];
         let mut work = vec![0.0; self.n_work()];
         self.refresh(pos.board(), pos.turn(), &mut acc);

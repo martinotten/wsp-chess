@@ -1,6 +1,6 @@
 //! Schalter für die Suchtechniken, Grenzen einer Suche und ihr Ergebnis.
 
-use shakmaty::Move;
+use crate::board::Move;
 use std::time::Duration;
 
 /// Abschaltbare Suchtechniken.
