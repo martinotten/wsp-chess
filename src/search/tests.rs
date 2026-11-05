@@ -14,7 +14,7 @@ fn pos(fen: &str) -> Chess {
 }
 
 fn searcher() -> Searcher {
-    let net = Arc::new(Net::load("../weights/weights.bin").unwrap());
+    let net = Arc::new(Net::load("weights/weights.bin").unwrap());
     Searcher::new(net, 1, Arc::new(AtomicBool::new(false)))
 }
 

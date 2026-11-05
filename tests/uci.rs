@@ -21,7 +21,7 @@ impl Write for Buf {
 fn session(input: &str) -> String {
     let buf = Buf::default();
     let out: Box<dyn Write + Send> = Box::new(buf.clone());
-    let opts = "setoption name Weights value ../weights/weights.bin\n";
+    let opts = "setoption name Weights value weights/weights.bin\n";
     run(Cursor::new(format!("{opts}{input}")), Arc::new(Mutex::new(out)));
     let bytes = buf.0.lock().unwrap().clone();
     String::from_utf8(bytes).unwrap()

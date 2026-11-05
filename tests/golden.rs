@@ -29,7 +29,7 @@ fn configs() -> Vec<(String, Opts)> {
 }
 
 fn fingerprint() -> String {
-    let net = Arc::new(Net::load("../weights/weights.bin").unwrap());
+    let net = Arc::new(Net::load("weights/weights.bin").unwrap());
     let mut engine = Searcher::new(net, 16, Arc::new(AtomicBool::new(false)));
     let mut text = String::new();
     for (name, opts) in configs() {

@@ -5,7 +5,7 @@ use super::{feature, Net, N_INPUTS};
 use shakmaty::{Chess, Color, Move, Position};
 
 fn net() -> Net {
-    Net::load("../weights/weights.bin").expect("Gewichtsdatei")
+    Net::load("weights/weights.bin").expect("Gewichtsdatei")
 }
 
 /// Referenz für `add_row`: dieselben Summanden in derselben Reihenfolge.

@@ -43,7 +43,7 @@ fn engine(threads: usize) -> (Engine, Buf) {
     let buf = Buf::default();
     let out: Box<dyn Write + Send> = Box::new(buf.clone());
     let mut engine = Engine::new(Arc::new(Mutex::new(out)));
-    engine.command("setoption name Weights value ../weights/weights.bin");
+    engine.command("setoption name Weights value weights/weights.bin");
     engine.command(&format!("setoption name Threads value {threads}"));
     (engine, buf)
 }
@@ -140,7 +140,7 @@ fn node_budget_is_shared() {
 /// Externes Stoppflag schon beim Suchbeginn gesetzt: trotzdem ein legaler Zug (Rückfall), kein `None`.
 #[test]
 fn stop_flag_set_before_the_search() {
-    let net = Arc::new(Net::load("../weights/weights.bin").unwrap());
+    let net = Arc::new(Net::load("weights/weights.bin").unwrap());
     let tt = Arc::new(Tt::new(4));
     let stop = Arc::new(AtomicBool::new(true));
     let mut searchers: Vec<Searcher> = (0..3)
