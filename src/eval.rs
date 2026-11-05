@@ -68,15 +68,18 @@ pub fn feature(persp: Color, piece: Piece, sq: Square) -> usize {
 }
 
 /// Ruft `visit(index, activation)` für alle positiven Werte auf; Blöcke zu 16 Werten werden zuerst
-/// als Ganzes geprüft (vektorisierbar), denn fast alle Neuronen sind inaktiv.
+/// als Ganzes geprüft, denn fast alle Neuronen sind inaktiv.
+///
+/// Vorprüfung über das Bitmuster als `i32`: Eine positive Zahl hat ein Muster `> 0`, `0.0`, `-0.0` und
+/// negative Zahlen nicht. Das Maximum ganzer Zahlen vektorisiert zuverlässig. Die Vorprüfung lässt
+/// keinen positiven Wert aus; entschieden wird danach wie bisher mit `value > 0.0`.
 #[inline]
-#[expect(
-    clippy::needless_bitwise_bool,
-    reason = "ohne Verzweigung, damit der Block vektorisiert wird"
-)]
 fn for_active(values: &[f32], mut visit: impl FnMut(usize, f32)) {
     for (block_index, block) in values.chunks(16).enumerate() {
-        if block.iter().fold(false, |any, &value| any | (value > 0.0)) {
+        let max_bits = block
+            .iter()
+            .fold(i32::MIN, |max, value| max.max(value.to_bits().cast_signed()));
+        if max_bits > 0 {
             for (offset, &value) in block.iter().enumerate() {
                 if value > 0.0 {
                     visit(block_index * 16 + offset, value);
@@ -208,6 +211,16 @@ impl Net {
         self.n2 + self.n3 + 1
     }
 
+    /// Ziele und Gewichte der Quelle `src` in gespeicherter Reihenfolge (Referenz für Tests).
+    #[cfg(test)]
+    fn row(&self, src: usize) -> impl Iterator<Item = (usize, f32)> + '_ {
+        let row = self.starts[src]..self.starts[src + 1];
+        self.targets[row.clone()]
+            .iter()
+            .copied()
+            .zip(self.weights[row].iter().copied())
+    }
+
     /// Addiert `scale` × Gewichte der Quelle `src` auf `dest`, der ab Ziel `offset` beginnt.
     #[inline]
     fn add_row(&self, src: usize, scale: f32, dest: &mut [f32], offset: usize) {
@@ -290,3 +303,6 @@ impl Net {
         self.score_from(&acc, &mut work)
     }
 }
+
+#[cfg(test)]
+mod tests;
