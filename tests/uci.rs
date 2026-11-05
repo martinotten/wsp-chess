@@ -38,6 +38,9 @@ fn bestmove(out: &str) -> &str {
 fn handshake_and_search() {
     let out = session("uci\nisready\nposition startpos moves e2e4\ngo depth 4\nisready\n");
     assert!(out.contains("uciok") && out.contains("readyok"));
+    // switches report their real default: everything on except QChecks
+    assert!(out.contains("option name QChecks type check default false"));
+    assert!(out.contains("option name LMR type check default true"));
     assert!(out.contains("info depth 4"), "{out}");
     let bm = bestmove(&out);
     assert_eq!(bm.len(), 4, "{out}");

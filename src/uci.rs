@@ -261,8 +261,10 @@ impl Engine {
         self.send(&format!(
             "option name Threads type spin default 1 min 1 max {MAX_THREADS}"
         ));
-        for (_, name) in Feature::ALL {
-            self.send(&format!("option name {name} type check default true"));
+        let defaults = Opts::default();
+        for (feature, name) in Feature::ALL {
+            let default = defaults.on(feature);
+            self.send(&format!("option name {name} type check default {default}"));
         }
         self.send("uciok");
     }
