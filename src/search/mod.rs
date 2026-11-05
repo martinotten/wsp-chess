@@ -12,11 +12,13 @@
 //! - `quiescence`: Ruhesuche an den Blättern (Schläge, Umwandlungen, Schachabwehr)
 //! - `ordering`: Zugsortierung (TT-Zug, MVV-LVA, Killer, History)
 //! - `node`, `score`, `options`: Suchfenster und Knoten, Werteumrechnung, Schalter und Grenzen
+//! - `parallel`: mehrere Suchthreads mit gemeinsamer Tabelle (Lazy SMP), [`search_parallel`]
 
 mod alphabeta;
 mod node;
 mod options;
 mod ordering;
+mod parallel;
 mod quiescence;
 mod root;
 mod score;
@@ -24,6 +26,7 @@ mod score;
 mod tests;
 
 pub use options::{Feature, Info, Limits, Opts};
+pub use parallel::{search_parallel, Team};
 
 use crate::eval::Net;
 use crate::tt::Tt;
@@ -94,10 +97,16 @@ struct Slot {
 /// Zustand der Suche (Tabellen bleiben zwischen Zügen erhalten).
 pub struct Searcher {
     net: Arc<Net>,
-    tt: Tt,
+    tt: Arc<Tt>,
+    /// Suchgeneration für die Ersetzung in der Tabelle; steigt je Suche, 0 nach [`Searcher::new_game`].
+    age: u8,
     /// Eingeschaltete Techniken.
     pub opts: Opts,
     stop: Arc<AtomicBool>,
+    /// Gemeinsamer Zustand der laufenden Suche (bei einem Thread nur dieser Sucher).
+    team: Team,
+    /// Helfer einer parallelen Suche: hört zusätzlich auf das Helferflag, gibt keinen Zug aus.
+    helper: bool,
     nodes: u64,
     evals: u64,
     start: Instant,
@@ -120,16 +129,26 @@ pub struct Searcher {
 }
 
 impl Searcher {
-    /// Neuer Sucher mit Transpositionstabelle von `hash_mb` MB; `stop` bricht eine Suche von außen ab.
+    /// Neuer Sucher mit eigener Transpositionstabelle von `hash_mb` MB; `stop` bricht eine Suche von
+    /// außen ab.
     #[must_use]
     pub fn new(net: Arc<Net>, hash_mb: usize, stop: Arc<AtomicBool>) -> Searcher {
+        Searcher::with_table(net, Arc::new(Tt::new(hash_mb)), stop)
+    }
+
+    /// Neuer Sucher, der die Tabelle `tt` mit anderen Suchern teilt.
+    #[must_use]
+    pub fn with_table(net: Arc<Net>, tt: Arc<Tt>, stop: Arc<AtomicBool>) -> Searcher {
         let n_targets = net.n_targets();
         let n_work = net.n_work();
         Searcher {
             net,
-            tt: Tt::new(hash_mb),
+            tt,
+            age: 0,
             opts: Opts::default(),
             stop,
+            team: Team::new(0),
+            helper: false,
             nodes: 0,
             evals: 0,
             start: Instant::now(),
@@ -165,6 +184,7 @@ impl Searcher {
     /// Neue Partie: Tabellen leeren.
     pub fn new_game(&mut self) {
         self.tt.clear();
+        self.age = 0;
         self.killers = [[0; 2]; MAX_PLY];
         self.history.fill(0);
     }
@@ -204,18 +224,31 @@ impl Searcher {
         to_cp(score)
     }
 
-    /// Zählt einen Knoten und prüft regelmäßig Stopp, Zeit und Knotenlimit.
+    /// Zählt einen Knoten und prüft regelmäßig Stopp, Zeit und Knotenlimit. Alle `2^TICK_SHIFT` Knoten
+    /// meldet der Thread sie an das gemeinsame Budget; bei einem Thread ist dessen Stand dann genau
+    /// `nodes`, bei mehreren wird das Limit um höchstens Threads × 1.024 Knoten überschritten.
     fn tick(&mut self) {
         self.nodes += 1;
-        if self.nodes.trailing_zeros() >= TICK_SHIFT && self.should_stop() {
-            self.aborted = true;
+        if self.nodes.trailing_zeros() >= TICK_SHIFT {
+            let total = self.team.nodes.fetch_add(1 << TICK_SHIFT, Ordering::Relaxed) + (1 << TICK_SHIFT);
+            if self.should_stop(total) {
+                self.aborted = true;
+            }
         }
     }
 
-    fn should_stop(&self) -> bool {
+    /// Externer Stopp (UCI), Helferflag (nur Helfer), gemeinsame Deadline oder gemeinsames Knotenbudget.
+    fn should_stop(&self, total_nodes: u64) -> bool {
         self.stop.load(Ordering::Relaxed)
+            || (self.helper && self.team.halt.load(Ordering::Relaxed))
             || self.deadline.is_some_and(|deadline| Instant::now() >= deadline)
-            || self.max_nodes.is_some_and(|max_nodes| self.nodes >= max_nodes)
+            || self.max_nodes.is_some_and(|max_nodes| total_nodes >= max_nodes)
+    }
+
+    /// Knoten aller Threads dieser Suche: gemeldetes Budget plus der noch nicht gemeldete Rest dieses
+    /// Threads (bei einem Thread genau `nodes`).
+    fn team_nodes(&self) -> u64 {
+        self.team.nodes.load(Ordering::Relaxed) + (self.nodes & ((1 << TICK_SHIFT) - 1))
     }
 
     /// Betritt einen Knoten auf Höhe `ply`; `false`, wenn die Suche abgebrochen ist.

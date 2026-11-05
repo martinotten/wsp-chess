@@ -1,9 +1,8 @@
 //! Wurzel: iterative Vertiefung mit Aspiration-Fenstern, Rückfallzug und Hauptvariante.
 
 use super::node::{Node, Window};
-use super::{hash, move_code, Feature, Info, Limits, Searcher, INF, MATE, MATE_BOUND, MAX_PLY};
+use super::{hash, move_code, Feature, Info, Limits, Searcher, Team, INF, MATE, MATE_BOUND, MAX_PLY};
 use shakmaty::{Chess, Move, Position};
-use std::time::Instant;
 
 /// Größte Iterationstiefe.
 const MAX_DEPTH: i32 = 100;
@@ -32,9 +31,28 @@ impl Searcher {
         pos: &Chess,
         game: &[u64],
         lim: Limits,
+        on_depth: impl FnMut(&Info),
+    ) -> (Option<Move>, Info) {
+        let team = self.begin_team();
+        self.search_main(pos, game, lim, &team, on_depth)
+    }
+
+    /// Neue Suche dieses Suchers als Hauptthread: Generation weiterzählen, gemeinsamer Zustand ab jetzt.
+    pub(super) fn begin_team(&mut self) -> Team {
+        self.age = self.age.wrapping_add(1);
+        Team::new(self.age)
+    }
+
+    /// Iterative Vertiefung des Hauptthreads (liefert Zug und Bericht).
+    pub(super) fn search_main(
+        &mut self,
+        pos: &Chess,
+        game: &[u64],
+        lim: Limits,
+        team: &Team,
         mut on_depth: impl FnMut(&Info),
     ) -> (Option<Move>, Info) {
-        self.start_search(&lim);
+        self.start_search(&lim, team, false);
         let root_key = self.begin_path(pos, game);
         let Some(mut state) = self.fallback(pos) else {
             return (None, Info::default());
@@ -51,15 +69,42 @@ impl Searcher {
         self.finish(state)
     }
 
-    fn start_search(&mut self, lim: &Limits) {
-        self.start = Instant::now();
+    /// Iterative Vertiefung eines Helfers (Nummer `index` ≥ 1): ungerade Nummern beginnen eine Tiefe
+    /// tiefer, damit nicht alle Threads dieselbe Tiefe rechnen. Ergebnis nur über die Tabelle.
+    pub(super) fn search_helper(
+        &mut self,
+        pos: &Chess,
+        game: &[u64],
+        lim: Limits,
+        team: &Team,
+        index: usize,
+    ) {
+        self.start_search(&lim, team, true);
+        let root_key = self.begin_path(pos, game);
+        let Some(mut state) = self.fallback(pos) else {
+            return;
+        };
+        let first = 1 + i32::from(index % 2 == 1);
+        for depth in first..=Self::depth_limit(&lim) {
+            if !self.complete_depth(pos, depth, root_key, &mut state)
+                || Self::mate_found(state.info.score, depth)
+            {
+                break;
+            }
+        }
+    }
+
+    fn start_search(&mut self, lim: &Limits, team: &Team, helper: bool) {
+        self.team = team.clone();
+        self.helper = helper;
+        self.age = team.age;
+        self.start = team.start;
         self.deadline = lim.movetime.map(|movetime| self.start + movetime);
         self.max_nodes = lim.nodes;
         self.nodes = 0;
         self.evals = 0;
         self.aborted = false;
         self.seldepth = 0;
-        self.tt.next_age();
         self.killers = [[0; 2]; MAX_PLY];
         for score in &mut self.history {
             *score /= HISTORY_DECAY;
@@ -86,10 +131,14 @@ impl Searcher {
         Some(Deepening { best, info })
     }
 
-    /// Rückfall, falls nicht einmal Tiefe 1 fertig wird: bester Zug nach Netz (ein Halbzug).
+    /// Rückfall, falls nicht einmal Tiefe 1 fertig wird: bester Zug nach Netz (ein Halbzug). Nach dem
+    /// ersten Zug ist ein legaler Zug gesichert; danach wird vor jeder Bewertung der Stopp geprüft.
     fn one_ply_best(&mut self, pos: &Chess) -> Option<(Move, i32)> {
-        let mut best = None;
+        let mut best: Option<(Move, i32)> = None;
         for mv in pos.legal_moves() {
+            if best.is_some() && self.should_stop(self.team_nodes()) {
+                break;
+            }
             let mut child = pos.clone();
             child.play_unchecked(mv);
             let score = if child.is_checkmate() {
@@ -170,11 +219,11 @@ impl Searcher {
             depth,
             seldepth: self.seldepth,
             score,
-            nodes: self.nodes,
+            nodes: self.team_nodes(),
             evals: self.evals,
             time: self.start.elapsed(),
             pv: self.pv(pos, best, usize::try_from(depth).unwrap_or(0) + 4),
-            hashfull: self.tt.hashfull(),
+            hashfull: self.tt.hashfull(self.age),
         }
     }
 
@@ -230,7 +279,7 @@ impl Searcher {
     /// Endbericht mit den Zählern der ganzen Suche.
     fn finish(&self, state: Deepening) -> (Option<Move>, Info) {
         let mut info = state.info;
-        info.nodes = self.nodes;
+        info.nodes = self.team_nodes();
         info.evals = self.evals;
         info.time = self.start.elapsed();
         (Some(state.best), info)

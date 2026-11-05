@@ -18,6 +18,14 @@ LLVM_BIN="$(brew --prefix llvm 2>/dev/null)/bin"
 if [ -x "$LLVM_BIN/llvm-cov" ]; then
   export LLVM_COV="$LLVM_BIN/llvm-cov" LLVM_PROFDATA="$LLVM_BIN/llvm-profdata"
 fi
-CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-target}/coverage" cargo llvm-cov --quiet --summary-only \
-  --ignore-filename-regex 'main\.rs' --fail-under-lines "$MIN_LINES" | tail -1
+# Ausgabe erst in eine Datei, damit ein Fehlschlag (Test oder Abdeckung) nicht in einer Pipe verloren geht.
+COV_OUT="$(mktemp)"
+trap 'rm -f "$COV_OUT"' EXIT
+if ! CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-target}/coverage" cargo llvm-cov --quiet --summary-only \
+  --ignore-filename-regex 'main\.rs' --fail-under-lines "$MIN_LINES" >"$COV_OUT" 2>&1; then
+  cat "$COV_OUT" >&2
+  echo "check.sh: Abdeckungslauf fehlgeschlagen" >&2
+  exit 1
+fi
+tail -1 "$COV_OUT"
 echo "check.sh: alles in Ordnung"

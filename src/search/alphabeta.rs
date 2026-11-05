@@ -76,15 +76,18 @@ impl Searcher {
         }
         let bound = bound_for(best.score, win.alpha, win.beta);
         let stored = to_tt(best.score, node.ply);
-        self.tt.store(Entry {
-            key: node.key,
-            mv: best.code,
-            score: stored,
-            eval: static_eval,
-            depth,
-            bound,
-            ..Entry::default()
-        });
+        self.tt.store(
+            Entry {
+                key: node.key,
+                mv: best.code,
+                score: stored,
+                eval: static_eval,
+                depth,
+                bound,
+                ..Entry::default()
+            },
+            self.age,
+        );
         best.score
     }
 

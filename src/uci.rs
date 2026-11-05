@@ -1,11 +1,13 @@
 //! UCI-Protokoll. Die Suche läuft in einem eigenen Thread, damit `stop` und `isready` jederzeit
-//! beantwortet werden.
+//! beantwortet werden. Mit der Option `Threads` > 1 startet dieser Thread zusätzliche Helfer
+//! (Lazy SMP, siehe `search::search_parallel`) und gibt `bestmove` erst aus, wenn alle beendet sind.
 //!
 //! Zusätzliche Befehle (nicht UCI): `eval` (statische Bewertung in Bauern), `perft <n>`
 //! (Zuggenerator-Test), `bench [tiefe]` (feste Tiefe auf festen Stellungen: Knotenzahl und Tempo).
 
 use crate::eval::Net;
-use crate::search::{self, Feature, Limits, Opts, Searcher};
+use crate::search::{self, search_parallel, Feature, Limits, Opts, Searcher};
+use crate::tt::Tt;
 use shakmaty::fen::Fen;
 use shakmaty::uci::UciMove;
 use shakmaty::{CastlingMode, Chess, Color, Position};
@@ -18,6 +20,9 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 const NAME: &str = "WSP Chess Net (Rust core)";
+
+/// Höchstzahl Suchthreads (12 Performance-Kerne des Entwicklungsrechners).
+pub const MAX_THREADS: usize = 12;
 
 /// Stellungen für `bench`.
 pub const BENCH: [&str; 8] = [
@@ -171,11 +176,13 @@ fn per_second(count: u64, elapsed: Duration) -> u64 {
 /// Zustand der Engine zwischen den Befehlen.
 pub struct Engine {
     out: Out,
-    searcher: Arc<Mutex<Option<Searcher>>>,
+    /// Ein Sucher je Thread (Index 0 = Hauptthread), gemeinsame Tabelle; leer = Netz nicht geladen.
+    searchers: Arc<Mutex<Vec<Searcher>>>,
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
     weights: String,
     hash_mb: usize,
+    threads: usize,
     opts: Opts,
     pos: Chess,
     hist: Vec<u64>,
@@ -188,11 +195,12 @@ impl Engine {
     pub fn new(out: Out) -> Engine {
         Engine {
             out,
-            searcher: Arc::new(Mutex::new(None)),
+            searchers: Arc::new(Mutex::new(Vec::new())),
             stop: Arc::new(AtomicBool::new(false)),
             thread: None,
             weights: default_weights(),
             hash_mb: 64,
+            threads: 1,
             opts: Opts::default(),
             pos: Chess::default(),
             hist: vec![],
@@ -204,20 +212,26 @@ impl Engine {
         send(&self.out, line);
     }
 
-    /// Lädt das Netz, falls nötig. Meldet Fehler als `info string` und gibt `false` zurück.
+    /// Lädt das Netz und legt je Thread einen Sucher an, falls nötig. Meldet Fehler als `info string`
+    /// und gibt `false` zurück.
     fn ensure(&mut self) -> bool {
-        let mut slot = lock(&self.searcher);
-        if slot.is_none() {
+        let mut searchers = lock(&self.searchers);
+        if searchers.is_empty() {
             match Net::load(&self.weights) {
-                Ok(net) => *slot = Some(Searcher::new(Arc::new(net), self.hash_mb, Arc::clone(&self.stop))),
+                Ok(net) => {
+                    let (net, tt) = (Arc::new(net), Arc::new(Tt::new(self.hash_mb)));
+                    searchers.extend((0..self.threads).map(|_| {
+                        Searcher::with_table(Arc::clone(&net), Arc::clone(&tt), Arc::clone(&self.stop))
+                    }));
+                }
                 Err(err) => {
-                    drop(slot);
+                    drop(searchers);
                     self.send(&format!("info string Fehler: {err}"));
                     return false;
                 }
             }
         }
-        if let Some(searcher) = slot.as_mut() {
+        for searcher in searchers.iter_mut() {
             searcher.opts = self.opts;
         }
         true
@@ -232,7 +246,7 @@ impl Engine {
     }
 
     /// Eingabeende: begrenzte Suche zu Ende laufen lassen, unendliche abbrechen.
-    fn finish(&mut self) {
+    pub fn finish(&mut self) {
         if self.infinite {
             self.stop_search();
         } else if let Some(handle) = self.thread.take() {
@@ -249,6 +263,9 @@ impl Engine {
             self.weights
         ));
         self.send("option name Hash type spin default 64 min 1 max 4096");
+        self.send(&format!(
+            "option name Threads type spin default 1 min 1 max {MAX_THREADS}"
+        ));
         for (_, name) in Feature::ALL {
             self.send(&format!("option name {name} type check default true"));
         }
@@ -266,10 +283,13 @@ impl Engine {
         self.stop_search();
         if name.eq_ignore_ascii_case("weights") {
             self.weights = value;
-            *lock(&self.searcher) = None;
+            lock(&self.searchers).clear();
         } else if name.eq_ignore_ascii_case("hash") {
             self.hash_mb = value.parse().unwrap_or(64);
-            *lock(&self.searcher) = None;
+            lock(&self.searchers).clear();
+        } else if name.eq_ignore_ascii_case("threads") {
+            self.threads = value.parse().unwrap_or(1).clamp(1, MAX_THREADS);
+            lock(&self.searchers).clear();
         } else if let Some(feature) = Feature::by_name(&name) {
             self.opts.set(feature, value.eq_ignore_ascii_case("true"));
         } else {
@@ -287,15 +307,17 @@ impl Engine {
         self.infinite = lim.infinite;
         let (pos, hist) = (self.pos.clone(), self.hist.clone());
         let (shared, stop, out) = (
-            Arc::clone(&self.searcher),
+            Arc::clone(&self.searchers),
             Arc::clone(&self.stop),
             Arc::clone(&self.out),
         );
         self.thread = Some(thread::spawn(move || {
             let best = {
-                let mut slot = lock(&shared);
-                let Some(searcher) = slot.as_mut() else { return };
-                let (best, info) = searcher.search(&pos, &hist, lim, |progress| {
+                let mut searchers = lock(&shared);
+                let Some((main, helpers)) = searchers.split_first_mut() else {
+                    return;
+                };
+                let (best, info) = search_parallel(main, helpers, &pos, &hist, lim, |progress| {
                     let pv: Vec<String> = progress.pv.iter().map(|&mv| search::uci(mv)).collect();
                     send(
                         &out,
@@ -338,8 +360,8 @@ impl Engine {
         }
         let (mut nodes, mut evals, started) = (0u64, 0u64, Instant::now());
         {
-            let mut slot = lock(&self.searcher);
-            let Some(searcher) = slot.as_mut() else {
+            let mut searchers = lock(&self.searchers);
+            let Some(searcher) = searchers.first_mut() else {
                 return;
             };
             for fen in BENCH {
@@ -382,7 +404,7 @@ impl Engine {
             "ucinewgame" => {
                 self.stop_search();
                 if self.ensure() {
-                    if let Some(searcher) = lock(&self.searcher).as_mut() {
+                    for searcher in lock(&self.searchers).iter_mut() {
                         searcher.new_game();
                     }
                 }
@@ -417,8 +439,8 @@ impl Engine {
         if !self.ensure() {
             return;
         }
-        let score = lock(&self.searcher)
-            .as_ref()
+        let score = lock(&self.searchers)
+            .first()
             .map(|searcher| searcher.net().score(&self.pos));
         if let Some(score) = score {
             self.send(&format!("info string eval {score:.6}"));

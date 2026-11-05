@@ -24,6 +24,7 @@ opt-level = 3
 unsafe_code = "forbid"
 missing_docs = "warn"
 unused_qualifications = "warn"
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage)"] }
 unreachable_pub = "warn"
 rust_2018_idioms = { level = "warn", priority = -1 }
 
