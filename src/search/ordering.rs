@@ -1,31 +1,31 @@
-//! Zugsortierung: TT-Zug, Schläge nach MVV-LVA, Killerzüge, History.
+//! Move ordering: TT move, captures by MVV-LVA, killer moves, history.
 
 use super::{is_quiet, move_code, Feature, Searcher};
 use crate::board::{Color, Move, Position};
 use crate::exchange::{value, victim_value};
 
-/// Zugsortierung: Rangstufen (TT-Zug vor Schlägen vor Killern vor History).
+/// Move ordering: rank tiers (TT move before captures before killers before history).
 const ORDER_TT_MOVE: i32 = 10_000_000;
 const ORDER_CAPTURE: i32 = 1_000_000;
 const ORDER_KILLERS: [i32; 2] = [900_000, 800_000];
 
-/// History: Obergrenze je Eintrag.
+/// History: upper limit per entry.
 const HISTORY_MAX: i32 = 400_000;
 
-/// Eintrag in der History-Tabelle: je Farbe ein Block, darin Start- und Zielfeld des Zugs.
+/// Entry in the history table: one block per colour, within it the move's from and to squares.
 fn history_idx(turn: Color, code: u16) -> usize {
     usize::from(turn == Color::Black) * 4096 + usize::from(code & 0xfff)
 }
 
 impl Searcher {
-    /// Rang eines Zugs: je größer, desto früher wird er durchsucht.
+    /// Rank of a move: the higher, the earlier it is searched.
     fn order_score(&self, turn: Color, mv: Move, tt_move: u16, ply: usize) -> i32 {
         let code = move_code(mv);
         if code == tt_move {
             return ORDER_TT_MOVE;
         }
         if !is_quiet(mv) {
-            // MVV-LVA: wertvolles Opfer zuerst, bei gleichem Opfer der billigere Angreifer
+            // MVV-LVA: most valuable victim first, for equal victims the cheaper attacker
             let promo = mv.promotion().map_or(0, value);
             return ORDER_CAPTURE + 10 * (victim_value(mv) + promo) - value(mv.role()) / 100;
         }
@@ -54,7 +54,7 @@ impl Searcher {
         self.opts.on(Feature::Killers) && self.killers[ply].contains(&code)
     }
 
-    /// Ruhiger Zug hat einen Beta-Schnitt erzeugt: als Killer und in der History merken.
+    /// A quiet move caused a beta cutoff: remember it as a killer and in the history.
     pub(super) fn reward_quiet(&mut self, turn: Color, code: u16, depth: i32, ply: usize) {
         if self.opts.on(Feature::Killers) && self.killers[ply][0] != code {
             self.killers[ply][1] = self.killers[ply][0];

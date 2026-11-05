@@ -1,10 +1,10 @@
-//! Mehrere Suchthreads (Lazy SMP): Alle durchsuchen dieselbe Stellung und teilen nur die
-//! Transpositionstabelle. Zug und `info` kommen vom Hauptthread (bewusste Einschränkung, übliche
-//! Lazy-SMP-Variante); die Helfer füllen die Tabelle und beschleunigen so dessen Suche.
+//! Several search threads (Lazy SMP): all search the same position and share only the
+//! transposition table. Move and `info` come from the main thread (deliberate restriction, the
+//! usual Lazy SMP variant); the helper threads fill the table and thereby speed up its search.
 //!
-//! Stoppsignale mit getrennten Zuständigkeiten:
-//! - das externe Flag (`stop` jedes Suchers) setzt nur der UCI-Eingabethread (`stop`, `quit`, neues `go`);
-//! - das Helferflag [`Team::halt`] setzt nur [`search_parallel`], sobald der Hauptthread fertig ist.
+//! Stop signals with separate responsibilities:
+//! - the external flag (`stop` of each searcher) is set only by the UCI input thread (`stop`, `quit`, new `go`);
+//! - the helper flag [`Team::halt`] is set only by [`search_parallel`] once the main thread is done.
 
 use super::{Info, Limits, Searcher};
 use crate::board::{Move, Position};
@@ -13,8 +13,8 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
 
-/// Was alle Threads einer Suche teilen: Startzeit (eine Deadline für alle), Knotenbudget, Generation
-/// der Tabelle und das Helferflag.
+/// What all threads of a search share: start time (one deadline for all), node budget, table
+/// generation and the helper flag.
 #[derive(Clone, Debug)]
 pub struct Team {
     pub(super) start: Instant,
@@ -24,7 +24,7 @@ pub struct Team {
 }
 
 impl Team {
-    /// Neuer gemeinsamer Zustand ab jetzt, Generation `age`.
+    /// New shared state from now on, generation `age`.
     pub(super) fn new(age: u8) -> Team {
         Team {
             start: Instant::now(),
@@ -35,12 +35,12 @@ impl Team {
     }
 }
 
-/// Lazy SMP: `main` sucht und berichtet über `on_depth`, die `helpers` suchen dieselbe Stellung
-/// (jeder zweite eine Tiefe voraus) und wirken nur über die Tabelle. Alle müssen dieselbe Tabelle
-/// (`Searcher::with_table`), dasselbe Netz und dasselbe externe Stoppflag haben.
+/// Lazy SMP: `main` searches and reports via `on_depth`, the `helpers` search the same position
+/// (every second one a depth ahead) and act only through the table. All must have the same table
+/// (`Searcher::with_table`), the same network and the same external stop flag.
 ///
-/// Ist der Hauptthread fertig, wird das Helferflag gesetzt und auf alle Helfer gewartet; erst dann
-/// kehrt die Funktion zurück. `Info.nodes` und `Info.evals` des Ergebnisses zählen alle Threads.
+/// Once the main thread is done, the helper flag is set and all helper threads are awaited; only
+/// then does the function return. `Info.nodes` and `Info.evals` of the result count all threads.
 pub fn search_parallel(
     main: &mut Searcher,
     helpers: &mut [Searcher],

@@ -1,14 +1,14 @@
-//! Brettschicht: Zugarten, UCI, Schlüssel nach FIDE-Gleichheit, Remis durch Material.
+//! Board layer: move kinds, UCI, keys by FIDE position equality, draw by insufficient material.
 
 use super::{Move, Piece, Position, Square};
 
 fn pos(fen: &str) -> Position {
-    Position::from_fen(fen).expect("gültige FEN")
+    Position::from_fen(fen).expect("valid FEN")
 }
 
 fn play(position: &mut Position, moves: &str) {
     for text in moves.split_whitespace() {
-        let mv = position.parse_uci(text).expect("legaler Zug");
+        let mv = position.parse_uci(text).expect("legal move");
         position.play_unchecked(mv);
     }
 }
@@ -42,7 +42,7 @@ fn move_kinds_and_pieces() {
         (ep.role(), ep.capture(), ep.to()),
         (Piece::Pawn, Some(Piece::Pawn), Square::D6)
     );
-    let promotion = position.parse_uci("b7b8n").expect("Umwandlung");
+    let promotion = position.parse_uci("b7b8n").expect("promotion");
     assert_eq!(
         (promotion.promotion(), promotion.is_capture()),
         (Some(Piece::Knight), false)
@@ -77,19 +77,19 @@ fn sorted(mut texts: Vec<String>) -> Vec<String> {
     texts
 }
 
-/// Nach einem Doppelschritt zählt en passant für den Schlüssel nur, wenn der Schlag legal ist.
+/// After a double step, en passant only counts for the key if the capture is legal.
 #[test]
 fn hash_ignores_en_passant_that_cannot_be_played() {
-    // kein Bauer kann schlagen: gleich wie dieselbe Stellung ohne en-passant-Feld
+    // no pawn can capture: same as the same position without an en passant square
     let mut pushed = pos("4k3/8/8/8/8/8/4P3/4K3 w - - 0 1");
     play(&mut pushed, "e2e4");
     assert_eq!(pushed.hash(), pos("4k3/8/8/8/4P3/8/8/4K3 b - - 0 1").hash());
-    // gefesselter Bauer (Turm auf a4 fesselt durch den eigenen König auf h4) darf nicht schlagen
+    // pinned pawn (rook on a4 pins it against its own king on h4) must not capture
     let mut pinned = pos("8/8/8/8/R4p1k/8/4P3/4K3 w - - 0 1");
     play(&mut pinned, "e2e4");
     assert!(pinned.parse_uci("f4e3").is_none());
     assert_eq!(pinned.hash(), pos("8/8/8/8/R3Pp1k/8/8/4K3 b - - 0 1").hash());
-    // ausführbarer Schlag: anderer Schlüssel
+    // playable capture: different key
     let mut open = pos("4k3/8/8/8/5p2/8/4P3/4K3 w - - 0 1");
     play(&mut open, "e2e4");
     assert!(open.parse_uci("f4e3").is_some());
@@ -112,8 +112,8 @@ fn insufficient_material() {
         ("4k3/8/8/8/8/8/8/4K3 w - - 0 1", true),
         ("4k3/8/8/8/8/8/8/4KN2 w - - 0 1", true),
         ("4k3/8/8/8/8/8/8/4KB2 w - - 0 1", true),
-        ("4kb2/8/8/8/8/8/8/2B1K3 w - - 0 1", true), // Läufer auf gleichfarbigen Feldern
-        ("4k1b1/8/8/8/8/8/8/2B1K3 w - - 0 1", false), // verschiedenfarbig
+        ("4kb2/8/8/8/8/8/8/2B1K3 w - - 0 1", true), // bishops on same-colored squares
+        ("4k1b1/8/8/8/8/8/8/2B1K3 w - - 0 1", false), // opposite-colored
         ("4kn2/8/8/8/8/8/8/4KN2 w - - 0 1", false),
         ("4k3/8/8/8/8/8/8/3NKN2 w - - 0 1", false),
         ("4kn2/8/8/8/8/8/8/4KB2 w - - 0 1", false),
@@ -131,10 +131,10 @@ fn check_mate_null_move_and_attackers() {
     assert!(mated.null_move().is_none());
     let quiet = Position::default();
     assert!(!quiet.is_check() && !quiet.is_checkmate());
-    let swapped = quiet.null_move().expect("Nullzug");
+    let swapped = quiet.null_move().expect("null move");
     assert_ne!(swapped.turn(), quiet.turn());
     let board = quiet.board();
     let attackers = quiet.attackers(Square::F3, super::Color::White, board.occupied());
-    assert_eq!(attackers.len(), 3); // Bauern e2, g2 und Springer g1
+    assert_eq!(attackers.len(), 3); // pawns e2, g2 and knight g1
     assert!(Position::from_fen("not a fen").is_none());
 }

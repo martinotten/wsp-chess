@@ -1,50 +1,50 @@
-//! Dünne Auswertung des handgeschriebenen Netzes (Export: `chess/export_rs.py`).
+//! Sparse evaluation of the hand-written network (export: `generator/export.py`).
 //!
-//! Ziele `T = [z1 | z2 | z3 | out]`. Jede Quelle (768 Eingaben, dann h1, h2, h3) hat eine Liste
-//! (Zielindex, Gewicht) in spätere Schichten. Weil je Stellung nur ~20 h1-, ~24 h2- und ~2 h3-Neuronen
-//! aktiv sind, werden nur deren Zeilen aufaddiert. Ergebnis `s` in Bauern, Sicht des Spielers am Zug.
+//! Targets `T = [z1 | z2 | z3 | out]`. Every source (768 inputs, then h1, h2, h3) has a list of
+//! (target index, weight) pairs into later layers. Because only ~20 h1, ~24 h2 and ~2 h3 neurons are
+//! active per position, only their rows are summed. Result `s` in pawns, from the side to move.
 //!
-//! Der Eingabeteil (Biases plus Beiträge aller gesetzten Eingabebits zu allen Zielen) heißt
-//! Akkumulator. Er lässt sich mit [`Net::update`] von einem Brett auf ein anderes nachführen.
+//! The input part (biases plus the contributions of all set input bits to all targets) is called the
+//! accumulator. [`Net::update`] carries it over from one board to another incrementally.
 
 use crate::board::{Color, Piece, Position, Square};
 use cozy_chess::Board;
 use std::fmt;
 
-/// Zahl der Eingabebits (12 Figurenarten × 64 Felder).
+/// Number of input bits (12 piece kinds × 64 squares).
 pub const N_INPUTS: usize = 768;
 const MAGIC: &[u8; 4] = b"WSPN";
 const VERSION: u32 = 1;
-/// Höchstzahl geänderter Merkmale, bis zu der [`Net::update`] nachführt statt neu zu berechnen.
+/// Maximum number of changed features up to which [`Net::update`] updates instead of recomputing.
 pub const MAX_CHANGES: usize = 12;
 
-/// Fehler beim Laden der Gewichtsdatei.
+/// Error while loading the weights file.
 #[derive(Debug)]
 pub enum LoadError {
-    /// Datei nicht lesbar.
+    /// File not readable.
     Io(std::io::Error),
-    /// Inhalt passt nicht zum Format.
+    /// Content does not match the format.
     Format(&'static str),
 }
 
 impl fmt::Display for LoadError {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            LoadError::Io(err) => write!(out, "Gewichtsdatei nicht lesbar: {err}"),
-            LoadError::Format(reason) => write!(out, "Gewichtsdatei ungültig: {reason}"),
+            LoadError::Io(err) => write!(out, "weights file not readable: {err}"),
+            LoadError::Format(reason) => write!(out, "weights file invalid: {reason}"),
         }
     }
 }
 
 impl std::error::Error for LoadError {}
 
-/// Das Netz in dünner Darstellung (je Quelle eine Liste von Zielen).
+/// The network in sparse form (one list of targets per source).
 ///
-/// Quellen sind die Eingabemerkmale und die Neuronen h1, h2, h3; Ziele sind die Vorstufen z1, z2,
-/// z3 und der Ausgang, hintereinander in einem Vektor. Die Gewichte der Quelle `src` stehen in
-/// `targets[starts[src]..starts[src + 1]]` und `weights[…]` (gleicher Bereich).
+/// Sources are the input features and the neurons h1, h2, h3; targets are the pre-activations z1,
+/// z2, z3 and the output, stored consecutively in one vector. The weights of source `src` are in
+/// `targets[starts[src]..starts[src + 1]]` and `weights[…]` (same range).
 pub struct Net {
-    /// Größen der Schichten h1, h2, h3.
+    /// Sizes of the layers h1, h2, h3.
     n1: usize,
     n2: usize,
     n3: usize,
@@ -54,8 +54,8 @@ pub struct Net {
     weights: Vec<f32>,
 }
 
-/// Eingabeindex wie `features.xi` in Python: `(Seite*6 + Typ)*64 + Feld`, Sicht `persp`
-/// (Seite 0 = Figuren von `persp`; ist `persp` Schwarz, wird das Brett vertikal gespiegelt).
+/// Input index as `xi` in `generator/constants.py`: `(side*6 + kind)*64 + square`, from the view of
+/// `persp` (side 0 = pieces of `persp`; if `persp` is Black, the board is mirrored vertically).
 #[must_use]
 pub fn feature(persp: Color, color: Color, role: Piece, sq: Square) -> usize {
     let side = usize::from(color != persp);
@@ -63,12 +63,12 @@ pub fn feature(persp: Color, color: Color, role: Piece, sq: Square) -> usize {
     (side * 6 + role as usize) * 64 + seen_sq as usize
 }
 
-/// Ruft `visit(index, activation)` für alle positiven Werte auf; Blöcke zu 16 Werten werden zuerst
-/// als Ganzes geprüft, denn fast alle Neuronen sind inaktiv.
+/// Calls `visit(index, activation)` for all positive values; blocks of 16 values are checked as a
+/// whole first, since almost all neurons are inactive.
 ///
-/// Vorprüfung über das Bitmuster als `i32`: Eine positive Zahl hat ein Muster `> 0`, `0.0`, `-0.0` und
-/// negative Zahlen nicht. Das Maximum ganzer Zahlen vektorisiert zuverlässig. Die Vorprüfung lässt
-/// keinen positiven Wert aus; entschieden wird danach wie bisher mit `value > 0.0`.
+/// The pre-check uses the bit pattern as `i32`: a positive number has a pattern `> 0`, whereas `0.0`,
+/// `-0.0` and negative numbers do not. An integer maximum vectorizes reliably. The pre-check never
+/// skips a positive value; the final decision is still made with `value > 0.0`.
 #[inline]
 fn for_active(values: &[f32], mut visit: impl FnMut(usize, f32)) {
     for (block_index, block) in values.chunks(16).enumerate() {
@@ -85,7 +85,7 @@ fn for_active(values: &[f32], mut visit: impl FnMut(usize, f32)) {
     }
 }
 
-/// Liest Little-Endian-Werte fester Breite der Reihe nach.
+/// Reads fixed-width little-endian values in sequence.
 struct Reader<'a> {
     bytes: &'a [u8],
 }
@@ -93,7 +93,7 @@ struct Reader<'a> {
 impl Reader<'_> {
     fn take(&mut self, len: usize) -> Result<&[u8], LoadError> {
         if self.bytes.len() < len {
-            return Err(LoadError::Format("Datei zu kurz"));
+            return Err(LoadError::Format("file too short"));
         }
         let (head, rest) = self.bytes.split_at(len);
         self.bytes = rest;
@@ -123,33 +123,33 @@ impl Reader<'_> {
     fn usizes(&mut self, count: usize) -> Result<Vec<usize>, LoadError> {
         self.u32s(count)?
             .into_iter()
-            .map(|value| usize::try_from(value).map_err(|_| LoadError::Format("Index zu groß")))
+            .map(|value| usize::try_from(value).map_err(|_| LoadError::Format("index too large")))
             .collect()
     }
 }
 
 impl Net {
-    /// Lädt die Gewichte aus einer Datei im Format von `export_rs.py`.
+    /// Loads the weights from a file in the format written by `generator/export.py`.
     ///
     /// # Errors
-    /// Wenn die Datei fehlt oder nicht zum Format passt.
+    /// If the file is missing or does not match the format.
     pub fn load(path: &str) -> Result<Net, LoadError> {
         Net::from_bytes(&std::fs::read(path).map_err(LoadError::Io)?)
     }
 
-    /// Liest die Gewichte aus Bytes und prüft die Struktur: Jede Quelle wirkt nur auf spätere
-    /// Schichten. Danach können [`Net::score_from`] und [`Net::update`] nur innerhalb der
-    /// Vektoren schreiben.
+    /// Reads the weights from bytes and validates the structure: every source feeds only later
+    /// layers. This guarantees that [`Net::score_from`] and [`Net::update`] only write within the
+    /// vectors.
     ///
     /// # Errors
-    /// Wenn die Bytes nicht zum Format passen.
+    /// If the bytes do not match the format.
     pub fn from_bytes(bytes: &[u8]) -> Result<Net, LoadError> {
         let mut reader = Reader { bytes };
         if reader.take(4)? != MAGIC {
-            return Err(LoadError::Format("Kennung WSPN fehlt"));
+            return Err(LoadError::Format("magic WSPN missing"));
         }
         if reader.u32s(1)? != [VERSION] {
-            return Err(LoadError::Format("unbekannte Version"));
+            return Err(LoadError::Format("unknown version"));
         }
         let sizes = reader.usizes(3)?;
         let (n1, n2, n3) = (sizes[0], sizes[1], sizes[2]);
@@ -161,12 +161,12 @@ impl Net {
         let targets = reader.usizes(nnz)?;
         let weights = reader.f32s(nnz)?;
         if !reader.bytes.is_empty() {
-            return Err(LoadError::Format("Daten nach dem Ende"));
+            return Err(LoadError::Format("trailing data after the end"));
         }
         if starts[0] != 0 || starts.windows(2).any(|pair| pair[0] > pair[1]) {
-            return Err(LoadError::Format("Zeilenanfänge nicht aufsteigend"));
+            return Err(LoadError::Format("row starts not ascending"));
         }
-        // Erstes erlaubtes Ziel je Quelle: Eingaben -> alles, h1 -> ab z2, h2 -> ab z3, h3 -> nur out
+        // First allowed target per source: inputs -> all, h1 -> from z2, h2 -> from z3, h3 -> out only
         for src in 0..n_sources {
             let min = if src < N_INPUTS {
                 0
@@ -181,7 +181,7 @@ impl Net {
                 .iter()
                 .any(|&target| target < min || target >= n_targets)
             {
-                return Err(LoadError::Format("Gewicht in eine frühere Schicht"));
+                return Err(LoadError::Format("weight into an earlier layer"));
             }
         }
         Ok(Net {
@@ -195,19 +195,19 @@ impl Net {
         })
     }
 
-    /// Länge eines Akkumulators.
+    /// Length of an accumulator.
     #[must_use]
     pub fn n_targets(&self) -> usize {
         self.n1 + self.n2 + self.n3 + 1
     }
 
-    /// Länge des Arbeitsvektors für [`Net::score_from`] (z2, z3, out).
+    /// Length of the work vector for [`Net::score_from`] (z2, z3, out).
     #[must_use]
     pub fn n_work(&self) -> usize {
         self.n2 + self.n3 + 1
     }
 
-    /// Ziele und Gewichte der Quelle `src` in gespeicherter Reihenfolge (Referenz für Tests).
+    /// Targets and weights of source `src` in stored order (reference for tests).
     #[cfg(test)]
     fn row(&self, src: usize) -> impl Iterator<Item = (usize, f32)> + '_ {
         let row = self.starts[src]..self.starts[src + 1];
@@ -217,7 +217,7 @@ impl Net {
             .zip(self.weights[row].iter().copied())
     }
 
-    /// Addiert `scale` × Gewichte der Quelle `src` auf `dest`, der ab Ziel `offset` beginnt.
+    /// Adds `scale` × the weights of source `src` to `dest`, which starts at target `offset`.
     #[inline]
     fn add_row(&self, src: usize, scale: f32, dest: &mut [f32], offset: usize) {
         let row = self.starts[src]..self.starts[src + 1];
@@ -226,10 +226,10 @@ impl Net {
         }
     }
 
-    /// Akkumulator für eine Perspektive von Grund auf.
+    /// Computes the accumulator for one perspective from scratch.
     pub fn refresh(&self, board: &Board, persp: Color, acc: &mut [f32]) {
         acc.copy_from_slice(&self.bias);
-        // aufsteigende Felder: feste Summationsreihenfolge, damit Werte bitgleich reproduzierbar sind
+        // ascending squares: fixed summation order so that values are bit-identically reproducible
         for sq in board.occupied() {
             if let (Some(color), Some(role)) = (board.color_on(sq), board.piece_on(sq)) {
                 self.add_row(feature(persp, color, role, sq), 1.0, acc, 0);
@@ -237,9 +237,9 @@ impl Net {
         }
     }
 
-    /// Führt den Akkumulator `acc` (Perspektive `persp`) von Brett `from` auf Brett `to` nach.
-    /// Gibt `false` zurück (ohne Änderung), wenn sich mehr als [`MAX_CHANGES`] Merkmale unterscheiden;
-    /// dann ist eine Neuberechnung mit [`Net::refresh`] billiger. `buf` ist Arbeitsspeicher.
+    /// Updates the accumulator `acc` (perspective `persp`) from board `from` to board `to`.
+    /// Returns `false` (without changes) if more than [`MAX_CHANGES`] features differ; a full
+    /// recomputation with [`Net::refresh`] is cheaper then. `buf` is scratch space.
     pub fn update(
         &self,
         from: &Board,
@@ -273,8 +273,8 @@ impl Net {
         true
     }
 
-    /// Bewertung `s` (Bauern) aus dem Akkumulator der Perspektive des Spielers am Zug.
-    /// `work` muss [`Net::n_work`] lang sein.
+    /// Evaluation `s` (pawns) from the accumulator of the side to move's perspective.
+    /// `work` must have length [`Net::n_work`].
     pub fn score_from(&self, acc: &[f32], work: &mut [f32]) -> f32 {
         let (n1, n2, n3) = (self.n1, self.n2, self.n3);
         work.copy_from_slice(&acc[n1..]);
@@ -292,7 +292,7 @@ impl Net {
         out[0]
     }
 
-    /// Bewertung ohne Akkumulator (Referenz für Tests und den Befehl `eval`).
+    /// Evaluation without an accumulator (reference for tests and the `eval` command).
     #[must_use]
     pub fn score(&self, pos: &Position) -> f32 {
         let mut acc = vec![0.0; self.n_targets()];

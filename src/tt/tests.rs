@@ -1,4 +1,4 @@
-//! Packung, Ersetzungsregel und gleichzeitige Zugriffe der Transpositionstabelle.
+//! Packing, replacement rule and concurrent access of the transposition table.
 
 use super::{Bound, Entry, Tt, DEPTH_MAX};
 use std::sync::Arc;
@@ -52,7 +52,7 @@ fn replacement_rule_and_kept_move() {
     let table = Tt::new(1);
     let key = 42;
     table.store(entry(key, 99, 10, 8), 1);
-    // gleiche Stellung ohne Zug: alter Zug bleibt, Rest wird ersetzt
+    // same position without a move: old move is kept, the rest is replaced
     table.store(
         Entry {
             mv: 0,
@@ -60,14 +60,14 @@ fn replacement_rule_and_kept_move() {
         },
         1,
     );
-    let found = table.probe(key).expect("Eintrag");
+    let found = table.probe(key).expect("entry");
     assert_eq!((found.mv, found.score, found.depth), (99, 20, 3));
-    // andere Stellung auf demselben Platz, flacher und gleiche Generation: nicht ersetzt
+    // other position on the same slot, shallower and same generation: not replaced
     let other = key + (table.slots.len() as u64);
     table.store(entry(other, 5, 1, 2), 1);
     assert!(table.probe(other).is_none());
     assert!(table.probe(key).is_some());
-    // neue Generation: ersetzt
+    // new generation: replaced
     table.store(entry(other, 5, 1, 2), 2);
     assert!(table.probe(other).is_some());
     assert!(table.probe(key).is_none());
@@ -77,8 +77,8 @@ fn replacement_rule_and_kept_move() {
     assert_eq!(table.hashfull(2), 0);
 }
 
-/// Mehrere Threads schreiben und lesen dieselben Plätze: keine Panik, und jeder gefundene Eintrag ist
-/// einer, den ein Thread für genau diesen Schlüssel geschrieben hat.
+/// Several threads write and read the same slots: no panic, and every entry found is one that a
+/// thread wrote for exactly this key.
 #[test]
 fn concurrent_writers_never_yield_foreign_entries() {
     let table = Arc::new(Tt::new(1));
@@ -89,20 +89,20 @@ fn concurrent_writers_never_yield_foreign_entries() {
             thread::spawn(move || {
                 let mut found = 0_u32;
                 for round in 0..200_000_u64 {
-                    // 16 Schlüssel je Platz, alle Threads auf denselben 64 Plätzen
+                    // 16 keys per slot, all threads on the same 64 slots
                     let key = (round % 64) + n_slots * ((round + thread_id) % 16) + 1;
-                    let value = i32::try_from(key % 1000).expect("klein");
+                    let value = i32::try_from(key % 1000).expect("small");
                     table.store(
                         entry(
                             key,
-                            u16::try_from(key % 0x7FFF).expect("klein"),
+                            u16::try_from(key % 0x7FFF).expect("small"),
                             value,
                             1 + value % 100,
                         ),
                         1,
                     );
                     if let Some(hit) = table.probe(key) {
-                        assert_eq!(hit.score, i32::try_from(hit.key % 1000).expect("klein"));
+                        assert_eq!(hit.score, i32::try_from(hit.key % 1000).expect("small"));
                         assert_eq!(u64::from(hit.mv), hit.key % 0x7FFF);
                         assert_eq!(hit.eval, Some(-hit.score / 2));
                         found += 1;
@@ -114,7 +114,7 @@ fn concurrent_writers_never_yield_foreign_entries() {
         .collect();
     let total: u32 = handles
         .into_iter()
-        .map(|handle| handle.join().expect("kein Absturz"))
+        .map(|handle| handle.join().expect("no crash"))
         .sum();
     assert!(total > 0);
 }

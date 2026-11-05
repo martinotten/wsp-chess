@@ -1,9 +1,9 @@
-//! UCI-Protokoll. Die Suche läuft in einem eigenen Thread, damit `stop` und `isready` jederzeit
-//! beantwortet werden. Mit der Option `Threads` > 1 startet dieser Thread zusätzliche Helfer
-//! (Lazy SMP, siehe `search::search_parallel`) und gibt `bestmove` erst aus, wenn alle beendet sind.
+//! UCI protocol. The search runs in its own thread so that `stop` and `isready` are answered at any
+//! time. With the option `Threads` > 1 this thread starts additional helpers (Lazy SMP, see
+//! `search::search_parallel`) and prints `bestmove` only once all of them have finished.
 //!
-//! Zusätzliche Befehle (nicht UCI): `eval` (statische Bewertung in Bauern), `perft <n>`
-//! (Zuggenerator-Test), `bench [tiefe]` (feste Tiefe auf festen Stellungen: Knotenzahl und Tempo).
+//! Additional commands (not UCI): `eval` (static evaluation in pawns), `perft <n>` (move generator
+//! test), `bench [depth]` (fixed depth on fixed positions: node count and speed).
 
 use crate::board::{Color, Position};
 use crate::eval::Net;
@@ -19,10 +19,10 @@ use std::time::{Duration, Instant};
 
 const NAME: &str = "WSP Chess Net (Rust core)";
 
-/// Höchstzahl Suchthreads (12 Performance-Kerne des Entwicklungsrechners).
+/// Maximum number of search threads (12 performance cores of the development machine).
 pub const MAX_THREADS: usize = 12;
 
-/// Stellungen für `bench`.
+/// Positions for `bench`.
 pub const BENCH: [&str; 8] = [
     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
     "r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4",
@@ -34,7 +34,7 @@ pub const BENCH: [&str; 8] = [
     "6k1/5pp1/7p/8/8/1Q5P/5PP1/6K1 w - - 0 1",
 ];
 
-/// Gemeinsame Ausgabe (Hauptthread und Suchthread).
+/// Shared output (main thread and search thread).
 pub type Out = Arc<Mutex<Box<dyn Write + Send>>>;
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -43,12 +43,12 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 fn send(out: &Out, line: &str) {
     let mut writer = lock(out);
-    // Ausgabefehler (GUI hat die Pipe geschlossen) sind nicht behebbar und werden ignoriert
+    // Output errors (the GUI closed the pipe) cannot be recovered from and are ignored
     let _ = writeln!(writer, "{line}");
     let _ = writer.flush();
 }
 
-/// Gewichtsdatei im Projekt: `target/release/wsp-chess` -> `weights/weights.bin`.
+/// Weights file in the project: `target/release/wsp-chess` -> `weights/weights.bin`.
 fn default_weights() -> String {
     let mut dir: PathBuf = std::env::current_exe().unwrap_or_default();
     for _ in 0..4 {
@@ -61,12 +61,12 @@ fn default_weights() -> String {
     "weights/weights.bin".into()
 }
 
-/// Liest eine Stellung aus FEN und optionaler Zugfolge.
+/// Reads a position from FEN.
 fn parse_fen(fen: &str) -> Option<Position> {
     Position::from_fen(fen)
 }
 
-/// `position startpos|fen ... [moves ...]` -> Stellung und Schlüssel der früheren Stellungen.
+/// `position startpos|fen ... [moves ...]` -> position and keys of the earlier positions.
 #[must_use]
 pub fn parse_position(args: &[&str]) -> Option<(Position, Vec<u64>)> {
     let (mut pos, rest) = match *args.first()? {
@@ -92,8 +92,8 @@ fn ms(millis: i64) -> Duration {
     Duration::from_millis(u64::try_from(millis.max(1)).unwrap_or(1))
 }
 
-/// `go ...` -> Suchgrenzen. Zeitverwaltung: `movetime` − 5 ms; bei Uhrzeit
-/// Rest/(movestogo oder 30) + 0,8·Inkrement, höchstens Rest/3 − 20 ms; ohne Angabe 1 s.
+/// `go ...` -> search limits. Time management: `movetime` − 5 ms; with a clock
+/// remaining/(movestogo or 30) + 0.8·increment, at most remaining/3 − 20 ms; otherwise 1 s.
 #[must_use]
 pub fn parse_go(args: &[&str], turn: Color) -> Limits {
     let mut lim = Limits::default();
@@ -132,7 +132,7 @@ pub fn parse_go(args: &[&str], turn: Color) -> Limits {
     lim
 }
 
-/// UCI-Score: `cp x` oder `mate n`.
+/// UCI score: `cp x` or `mate n`.
 #[must_use]
 pub fn score_str(score: i32) -> String {
     if score.abs() >= search::MATE_BOUND {
@@ -143,7 +143,7 @@ pub fn score_str(score: i32) -> String {
     }
 }
 
-/// Zahl der Blätter in Tiefe `d` (Zuggenerator-Test).
+/// Number of leaves at depth `depth` (move generator test).
 #[must_use]
 pub fn perft(pos: &Position, depth: u32) -> u64 {
     if depth == 0 {
@@ -168,10 +168,10 @@ fn per_second(count: u64, elapsed: Duration) -> u64 {
     u64::try_from(u128::from(count) * 1000 / ms).unwrap_or(u64::MAX)
 }
 
-/// Zustand der Engine zwischen den Befehlen.
+/// Engine state between commands.
 pub struct Engine {
     out: Out,
-    /// Ein Sucher je Thread (Index 0 = Hauptthread), gemeinsame Tabelle; leer = Netz nicht geladen.
+    /// One searcher per thread (index 0 = main thread), shared table; empty = network not loaded.
     searchers: Arc<Mutex<Vec<Searcher>>>,
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
@@ -185,7 +185,7 @@ pub struct Engine {
 }
 
 impl Engine {
-    /// Neue Engine, die nach `out` schreibt.
+    /// New engine writing to `out`.
     #[must_use]
     pub fn new(out: Out) -> Engine {
         Engine {
@@ -207,8 +207,8 @@ impl Engine {
         send(&self.out, line);
     }
 
-    /// Lädt das Netz und legt je Thread einen Sucher an, falls nötig. Meldet Fehler als `info string`
-    /// und gibt `false` zurück.
+    /// Loads the network and creates one searcher per thread, if necessary. Reports errors as
+    /// `info string` and returns `false`.
     fn ensure(&mut self) -> bool {
         let mut searchers = lock(&self.searchers);
         if searchers.is_empty() {
@@ -221,7 +221,7 @@ impl Engine {
                 }
                 Err(err) => {
                     drop(searchers);
-                    self.send(&format!("info string Fehler: {err}"));
+                    self.send(&format!("info string error: {err}"));
                     return false;
                 }
             }
@@ -235,17 +235,17 @@ impl Engine {
     fn stop_search(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
         if let Some(handle) = self.thread.take() {
-            // Ein abgestürzter Suchthread hat nichts mehr auszugeben
+            // A crashed search thread has nothing left to print
             let _ = handle.join();
         }
     }
 
-    /// Eingabeende: begrenzte Suche zu Ende laufen lassen, unendliche abbrechen.
+    /// End of input: let a limited search finish, abort an infinite one.
     pub fn finish(&mut self) {
         if self.infinite {
             self.stop_search();
         } else if let Some(handle) = self.thread.take() {
-            // Ein abgestürzter Suchthread hat nichts mehr auszugeben
+            // A crashed search thread has nothing left to print
             let _ = handle.join();
         }
     }
@@ -288,7 +288,7 @@ impl Engine {
         } else if let Some(feature) = Feature::by_name(&name) {
             self.opts.set(feature, value.eq_ignore_ascii_case("true"));
         } else {
-            self.send(&format!("info string unbekannte Option {name}"));
+            self.send(&format!("info string unknown option {name}"));
         }
     }
 
@@ -381,7 +381,7 @@ impl Engine {
         ));
     }
 
-    /// Verarbeitet eine Eingabezeile. Gibt `false` bei `quit` zurück.
+    /// Processes one input line. Returns `false` on `quit`.
     pub fn command(&mut self, line: &str) -> bool {
         let tokens: Vec<&str> = line.split_whitespace().collect();
         let Some((&cmd, args)) = tokens.split_first() else {
@@ -412,7 +412,7 @@ impl Engine {
                     self.pos = position;
                     self.hist = history;
                 } else {
-                    self.send("info string ungültige Stellung");
+                    self.send("info string invalid position");
                 }
             }
             "go" => self.go(args),
@@ -429,7 +429,7 @@ impl Engine {
         true
     }
 
-    /// `eval`: statische Bewertung der aktuellen Stellung in Bauern.
+    /// `eval`: static evaluation of the current position in pawns.
     fn static_eval(&mut self) {
         if !self.ensure() {
             return;
@@ -442,7 +442,7 @@ impl Engine {
         }
     }
 
-    /// `perft [tiefe]`: Zahl der Blätter für den Zuggenerator-Test.
+    /// `perft [depth]`: number of leaves for the move generator test.
     fn perft(&self, args: &[&str]) {
         let depth = args.first().and_then(|arg| arg.parse().ok()).unwrap_or(1);
         let started = Instant::now();
@@ -454,7 +454,7 @@ impl Engine {
     }
 }
 
-/// Liest Befehle bis `quit` oder Eingabeende.
+/// Reads commands until `quit` or end of input.
 pub fn run(input: impl BufRead, out: Out) {
     let mut engine = Engine::new(out);
     for line in input.lines() {

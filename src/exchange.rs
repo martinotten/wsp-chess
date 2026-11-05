@@ -1,16 +1,16 @@
-//! Materialwerte und statische Abtauschbewertung (SEE, *static exchange evaluation*).
+//! Material values and static exchange evaluation (SEE).
 //!
-//! SEE schätzt, was ein Schlag auf einem Feld am Ende einbringt, wenn beide Seiten abwechselnd mit
-//! ihrer jeweils billigsten Figur zurückschlagen und jede Seite aufhören darf, sobald Weiterschlagen
-//! schlechter wäre. Fesselungen werden nicht beachtet.
+//! SEE estimates the final outcome of a capture on a square when both sides alternately recapture
+//! with their cheapest piece and each side may stop as soon as continuing to capture would be worse.
+//! Pins are ignored.
 
 use crate::board::{Color, Move, Piece, Position, Square};
 use cozy_chess::BitBoard;
 
-/// Längste betrachtete Schlagfolge auf einem Feld.
+/// Longest capture sequence considered on one square.
 const MAX_EXCHANGE: usize = 32;
 
-/// Materialwert in cp (für Sortierung, Abtausch und Delta-Pruning).
+/// Material value in cp (for move ordering, exchanges and delta pruning).
 #[must_use]
 pub fn value(role: Piece) -> i32 {
     match role {
@@ -22,7 +22,7 @@ pub fn value(role: Piece) -> i32 {
     }
 }
 
-/// Wert der geschlagenen Figur in cp (0 für Züge ohne Schlag).
+/// Value of the captured piece in cp (0 for non-captures).
 pub(crate) fn victim_value(mv: Move) -> i32 {
     if mv.is_en_passant() {
         value(Piece::Pawn)
@@ -31,7 +31,7 @@ pub(crate) fn victim_value(mv: Move) -> i32 {
     }
 }
 
-/// Abtauschbilanz eines Schlags in cp aus Sicht des Ziehenden; 0 für Züge ohne Schlag.
+/// Exchange balance of a capture in cp from the mover's view; 0 for non-captures.
 #[must_use]
 pub fn see(pos: &Position, mv: Move) -> i32 {
     let (from, victim) = (mv.from(), victim_value(mv));
@@ -43,7 +43,7 @@ pub fn see(pos: &Position, mv: Move) -> i32 {
     best_outcome(&mut gains, last)
 }
 
-/// Ruhiger Zug: steht die Figur auf dem Zielfeld angegriffen und ungedeckt, gilt sie als verloren.
+/// Quiet move: if the piece stands attacked and undefended on the target square, it counts as lost.
 pub(crate) fn see_quiet(pos: &Position, mv: Move) -> i32 {
     let (us, them) = (pos.turn(), !pos.turn());
     let occ = pos.board().occupied() & !mv.from().bitboard();
@@ -56,8 +56,8 @@ pub(crate) fn see_quiet(pos: &Position, mv: Move) -> i32 {
     }
 }
 
-/// Spielt die Schlagfolge auf dem Zielfeld durch. `gains[k]` ist die Bilanz der Seite, die den
-/// k-ten Schlag ausführt, falls danach niemand mehr schlägt. Gibt den Index des letzten Schlags zurück.
+/// Plays out the capture sequence on the target square. `gains[k]` is the balance of the side making
+/// the k-th capture if nobody captures afterwards. Returns the index of the last capture.
 fn speculative_gains(pos: &Position, mv: Move, from: Square, gains: &mut [i32; MAX_EXCHANGE]) -> usize {
     let target = mv.to();
     let mut occ = occupancy_after(pos, mv, from);
@@ -67,7 +67,7 @@ fn speculative_gains(pos: &Position, mv: Move, from: Square, gains: &mut [i32; M
     gains[0] = victim_value(mv);
     while let Some((role, sq)) = least_valuable_attacker(pos, target, side, occ) {
         if on_target == Piece::King {
-            // Der König hat auf ein noch angegriffenes Feld geschlagen: unzulässig, Schlag zurücknehmen
+            // The king captured onto a square that is still attacked: illegal, take the capture back
             last = last.saturating_sub(1);
             break;
         }
@@ -83,7 +83,7 @@ fn speculative_gains(pos: &Position, mv: Move, from: Square, gains: &mut [i32; M
     last
 }
 
-/// Belegung nach dem ersten Schlag ohne die schlagende Figur; en passant auch ohne den geschlagenen Bauern.
+/// Occupancy after the first capture without the capturer; for en passant also without the captured pawn.
 fn occupancy_after(pos: &Position, mv: Move, from: Square) -> BitBoard {
     let occ = pos.board().occupied() & !from.bitboard();
     if mv.is_en_passant() {
@@ -93,7 +93,7 @@ fn occupancy_after(pos: &Position, mv: Move, from: Square) -> BitBoard {
     }
 }
 
-/// Billigste Figur von `side`, die `target` bei Belegung `occ` angreift (Röntgenangriffe eingeschlossen).
+/// Cheapest piece of `side` attacking `target` with occupancy `occ` (including X-ray attacks).
 fn least_valuable_attacker(
     pos: &Position,
     target: Square,
@@ -108,7 +108,7 @@ fn least_valuable_attacker(
     })
 }
 
-/// Wertet die Schlagfolge rückwärts aus: Jede Seite hört auf, wenn Weiterschlagen schlechter wäre.
+/// Evaluates the capture sequence backwards: each side stops when continuing to capture would be worse.
 fn best_outcome(gains: &mut [i32; MAX_EXCHANGE], last: usize) -> i32 {
     for step in (1..=last).rev() {
         gains[step - 1] = -(-gains[step - 1]).max(gains[step]);
@@ -134,24 +134,24 @@ mod tests {
 
     #[test]
     fn defender_stops_when_recapture_loses() {
-        // Turm schlägt Bauern, Dame könnte zurückschlagen, wird aber vom zweiten Turm wiedergeschlagen
+        // Rook takes pawn, queen could recapture but would be taken by the second rook
         let (position, mv) = play("3qk3/8/8/3p4/8/8/3R4/3RK3 w - - 0 1", "d2d5");
         assert_eq!(see(&position, mv), 100);
     }
 
     #[test]
     fn xray_attacker_joins_the_exchange() {
-        // Txd5 Txd5, dann lohnt Dxd5 nicht, weil der Turm d8 (hinter d7) zurückschlägt: Turm gegen Bauer
+        // Rxd5 Rxd5, then Qxd5 does not pay off because the rook on d8 (behind d7) recaptures: rook for pawn
         let (position, mv) = play("3rk3/3r4/8/3p4/8/8/3R4/3QK3 w - - 0 1", "d2d5");
         assert_eq!(see(&position, mv), -400);
     }
 
     #[test]
     fn king_cannot_recapture_into_attack() {
-        // Nur der König deckt d5, der zweite Turm steht dahinter: Kxd5 wäre unzulässig
+        // Only the king defends d5, the second rook stands behind: Kxd5 would be illegal
         let (position, mv) = play("8/8/4k3/3p4/8/8/3R4/3RK3 w - - 0 1", "d2d5");
         assert_eq!(see(&position, mv), 100);
-        // Ohne zweiten Turm darf der König zurückschlagen: Turm gegen Bauer
+        // Without the second rook the king may recapture: rook for pawn
         let (other_position, other_mv) = play("8/8/4k3/3p4/8/8/3R4/4K3 w - - 0 1", "d2d5");
         assert_eq!(see(&other_position, other_mv), -400);
     }

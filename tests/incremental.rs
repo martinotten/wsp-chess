@@ -1,4 +1,4 @@
-//! Inkrementelle Bewertung während einer echten Suche = Neuberechnung.
+//! Incremental evaluation during a real search equals full recomputation.
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use wsp_chess::board::Position;

@@ -1,4 +1,4 @@
-//! Tests der Suchbausteine.
+//! Tests of the search building blocks.
 use super::alphabeta::{FUTILITY_MARGIN, FUTILITY_MAX_DEPTH};
 use super::node::{Candidate, Node, Plan, Window};
 use super::score::{bound_for, from_tt, mated_in, to_tt};
@@ -30,11 +30,11 @@ fn search_depth(
 
 #[test]
 fn mate_scores_survive_the_tt_at_any_height() {
-    // Matt in 5 Halbzügen von der Wurzel, gefunden auf Höhe 3: im Knoten „matt in 2“
+    // mate in 5 plies from the root, found at ply 3: "mate in 2" at the node
     let at_root = MATE - 5;
     assert_eq!(to_tt(at_root, 3), MATE - 2);
     assert_eq!(from_tt(to_tt(at_root, 3), 3), at_root);
-    // derselbe Eintrag auf Höhe 7 erreicht: Matt in 9 von der Wurzel
+    // the same entry reached at ply 7: mate in 9 from the root
     assert_eq!(from_tt(to_tt(at_root, 3), 7), MATE - 9);
     assert_eq!(from_tt(to_tt(-at_root, 3), 7), -(MATE - 9));
     assert_eq!(to_tt(123, 9), 123);
@@ -66,7 +66,7 @@ fn move_encoding() {
         .into_iter()
         .find(|mv| mv.is_castle())
         .unwrap();
-    // Rochade wird als Königszug kodiert (e1g1 bzw. e1c1)
+    // castling is encoded as a king move (e1g1 or e1c1)
     let (from, to) = (move_code(castle) & 0x3f, (move_code(castle) >> 6) & 0x3f);
     assert_eq!(from, Square::E1 as u16);
     assert!(to == Square::G1 as u16 || to == Square::C1 as u16);
@@ -84,12 +84,12 @@ fn move_encoding() {
 fn repetition_is_found_only_within_reversible_moves() {
     let mut engine = searcher();
     engine.path = vec![7, 1, 2, 3, 4];
-    // gleiche Seite am Zug: Schlüssel 2 Halbzüge, 4 Halbzüge zurück
+    // same side to move: keys 2 plies and 4 plies back
     assert!(engine.is_repetition(2, 10));
-    assert!(!engine.is_repetition(3, 10), "andere Seite am Zug");
-    assert!(!engine.is_repetition(2, 1), "irreversibler Zug dazwischen");
+    assert!(!engine.is_repetition(3, 10), "other side to move");
+    assert!(!engine.is_repetition(2, 1), "irreversible move in between");
     engine.path = vec![2, 0, 9, 9];
-    assert!(!engine.is_repetition(2, 10), "Nullzug ist eine Grenze");
+    assert!(!engine.is_repetition(2, 10), "null move is a boundary");
 }
 
 #[test]
@@ -98,19 +98,23 @@ fn fifty_move_rule_makes_the_search_a_draw() {
     let position = pos("8/8/8/4k3/8/8/R7/4K3 w - - 99 80");
     let (_, info) = search_depth(&mut engine, &position, &[], 3);
     assert_eq!(info.score, 0);
-    assert_eq!(info.pv.len(), 1, "Hauptvariante endet an der 50-Züge-Grenze");
+    assert_eq!(
+        info.pv.len(),
+        1,
+        "principal variation ends at the fifty-move limit"
+    );
     let fresh = pos("8/8/8/4k3/8/8/R7/4K3 w - - 0 80");
     let (_, fresh_info) = search_depth(&mut engine, &fresh, &[], 3);
-    assert!(fresh_info.score > 300, "Turm mehr: {}", fresh_info.score);
+    assert!(fresh_info.score > 300, "rook up: {}", fresh_info.score);
 }
 
 #[test]
 fn insufficient_material_is_a_draw_and_mate_beats_the_fifty_move_rule() {
     let mut engine = searcher();
-    // König und Läufer gegen König: Remis, egal wie tief
+    // king and bishop versus king: draw, however deep
     let (_, info) = search_depth(&mut engine, &pos("8/8/8/4k3/8/8/2B5/4K3 w - - 0 1"), &[], 4);
     assert_eq!(info.score, 0);
-    // Ta8 setzt matt und erreicht zugleich die 50-Züge-Grenze: Matt hat Vorrang
+    // Ra8 mates and at the same time reaches the fifty-move limit: mate takes precedence
     let (best, mate_info) = search_depth(&mut engine, &pos("6k1/5ppp/8/8/8/8/8/R5K1 w - - 99 80"), &[], 3);
     assert_eq!(best.map(uci).as_deref(), Some("a1a8"));
     assert!(mate_info.score > MATE_BOUND, "{}", mate_info.score);
@@ -118,7 +122,7 @@ fn insufficient_material_is_a_draw_and_mate_beats_the_fifty_move_rule() {
 
 #[test]
 fn repetition_against_game_history_is_a_draw() {
-    // Schwarz steht klar schlechter, kann aber durch Rückkehr in eine frühere Stellung remisieren
+    // Black is clearly worse but can draw by returning to an earlier position
     let mut engine = searcher();
     let position = pos("8/8/8/4k3/8/8/R7/4K3 w - - 60 80");
     let earlier: Vec<u64> = position
@@ -130,12 +134,12 @@ fn repetition_against_game_history_is_a_draw() {
             hash(&child)
         })
         .collect();
-    // Jede Folgestellung kam schon vor: jeder Zug wiederholt, die Suche sieht Remis
-    // (Abstand 2 Halbzüge zur Folgestellung: Füllwert 1 steht für die Stellungen mit Schwarz am Zug)
+    // every successor position has occurred before: every move repeats, the search sees a draw
+    // (2 plies between successor positions: filler value 1 stands for the positions with Black to move)
     let game: Vec<u64> = earlier.iter().flat_map(|&key| [1, key]).collect();
     let (_, info) = search_depth(&mut engine, &position, &game, 3);
     assert_eq!(info.score, 0);
-    assert_eq!(info.pv.len(), 1, "Hauptvariante endet vor der Wiederholung");
+    assert_eq!(info.pv.len(), 1, "principal variation ends before the repetition");
 }
 
 #[test]
@@ -177,20 +181,16 @@ fn lmr_reduces_only_late_quiet_moves() {
     assert_eq!(
         engine.lmr_reduction(&cand(2, true, false), &plan),
         0,
-        "früher Zug"
+        "early move"
     );
     assert_eq!(engine.lmr_reduction(&cand(3, true, false), &plan), 1);
     assert_eq!(
         engine.lmr_reduction(&cand(6, true, false), &plan),
         2,
-        "später Zug, große Tiefe"
+        "late move, high depth"
     );
-    assert_eq!(engine.lmr_reduction(&cand(6, false, false), &plan), 0, "Schlag");
-    assert_eq!(
-        engine.lmr_reduction(&cand(6, true, true), &plan),
-        0,
-        "Schachgebot"
-    );
+    assert_eq!(engine.lmr_reduction(&cand(6, false, false), &plan), 0, "capture");
+    assert_eq!(engine.lmr_reduction(&cand(6, true, true), &plan), 0, "check");
 }
 
 #[test]
@@ -202,7 +202,7 @@ fn futility_needs_low_depth_and_a_large_gap() {
     assert!(!engine.is_futile(FUTILITY_MAX_DEPTH + 1, win, -10_000));
     assert!(
         !engine.is_futile(1, Window::around(0, 50), -10_000),
-        "nicht in der Hauptvariante"
+        "not in the principal variation"
     );
 }
 

@@ -2,7 +2,7 @@
 name = "wsp-chess"
 version = "0.1.0"
 edition = "2021"
-description = "UCI-Engine mit dem handgeschriebenen Schachnetz (Weight-Space Programming) als Bewertung"
+description = "UCI engine that uses a hand-written chess network (Weight-Space Programming) as its evaluation"
 
 [dependencies]
 arrayvec = "0.7.8"
@@ -20,7 +20,7 @@ debug = false
 [profile.test]
 opt-level = 3
 
-# Strenge Regeln, geprüft von ./check.sh (fmt, clippy -D warnings, Tests)
+# Strict rules, checked by ./check.sh (fmt, clippy -D warnings, tests)
 [lints.rust]
 unsafe_code = "forbid"
 missing_docs = "warn"

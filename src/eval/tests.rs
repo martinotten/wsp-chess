@@ -1,21 +1,21 @@
-//! Bitgleichheit der Auswertung: [`Net::score_from`] und [`Net::update`] gegen eine einfache
-//! Referenz (dichter Scan, Zeilen in gespeicherter Reihenfolge), verglichen mit `f32::to_bits`.
+//! Bit-identical evaluation: [`Net::score_from`] and [`Net::update`] against a simple reference
+//! (dense scan, rows in stored order), compared with `f32::to_bits`.
 
 use super::{feature, Net, N_INPUTS};
 use crate::board::{Color, Move, Piece, Position, Square};
 
 fn net() -> Net {
-    Net::load("weights/weights.bin").expect("Gewichtsdatei")
+    Net::load("weights/weights.bin").expect("weights file")
 }
 
-/// Referenz für `add_row`: dieselben Summanden in derselben Reihenfolge.
+/// Reference for `add_row`: the same summands in the same order.
 fn add_row_reference(net: &Net, src: usize, scale: f32, dest: &mut [f32], offset: usize) {
     for (target, weight) in net.row(src) {
         dest[target - offset] += weight * scale;
     }
 }
 
-/// Referenz für `score_from`: jedes Neuron einzeln prüfen, aktiv heißt endgültig `> 0.0`.
+/// Reference for `score_from`: checks every neuron individually, active means `> 0.0`.
 fn score_reference(net: &Net, acc: &[f32]) -> f32 {
     let (n1, n2, n3) = (net.n1, net.n2, net.n3);
     let mut work = acc[n1..].to_vec();
@@ -39,7 +39,7 @@ fn score_reference(net: &Net, acc: &[f32]) -> f32 {
     out[0]
 }
 
-/// Einfacher deterministischer Zufall (xorshift64).
+/// Simple deterministic random numbers (xorshift64).
 struct Rng(u64);
 
 impl Rng {
@@ -47,11 +47,11 @@ impl Rng {
         self.0 ^= self.0 << 13;
         self.0 ^= self.0 >> 7;
         self.0 ^= self.0 << 17;
-        usize::try_from(self.0 % u64::try_from(limit).expect("klein")).expect("klein")
+        usize::try_from(self.0 % u64::try_from(limit).expect("small")).expect("small")
     }
 }
 
-/// Eine Stellung mit den Akkumulatoren beider Perspektiven (Index 0 = Weiß).
+/// A position with the accumulators of both perspectives (index 0 = White).
 struct Node {
     position: Position,
     acc: [Vec<f32>; 2],
@@ -87,7 +87,7 @@ fn bits(values: &[f32]) -> Vec<u32> {
     values.iter().map(|value| value.to_bits()).collect()
 }
 
-/// Lange Make/Unmake-Folgen: Zufallszüge, mit Rücknahmen (Stapel) wie in der Suche.
+/// Long make/unmake sequences: random moves, with take-backs (stack) as in the search.
 #[test]
 fn score_and_update_bit_identical_to_reference() {
     let net = net();
@@ -103,7 +103,7 @@ fn score_and_update_bit_identical_to_reference() {
         }
         let mut stack = vec![Node { position: start, acc }];
         for _step in 0..400 {
-            let node = stack.last().expect("nie leer");
+            let node = stack.last().expect("never empty");
             let moves = node.position.legal_moves();
             if moves.is_empty() || stack.len() > 60 || (stack.len() > 1 && rng.below(4) == 0) {
                 stack.pop();
@@ -115,8 +115,8 @@ fn score_and_update_bit_identical_to_reference() {
             let mv = moves[rng.below(moves.len())];
             let fast = child(&net, node, mv, &mut buf, false);
             let slow = child(&net, node, mv, &mut buf, true);
-            assert_eq!(bits(&fast.acc[0]), bits(&slow.acc[0]), "Akkumulator Weiß");
-            assert_eq!(bits(&fast.acc[1]), bits(&slow.acc[1]), "Akkumulator Schwarz");
+            assert_eq!(bits(&fast.acc[0]), bits(&slow.acc[0]), "accumulator White");
+            assert_eq!(bits(&fast.acc[1]), bits(&slow.acc[1]), "accumulator Black");
             let side = usize::from(fast.position.turn() == Color::Black);
             let score = net.score_from(&fast.acc[side], &mut work);
             assert_eq!(score.to_bits(), score_reference(&net, &fast.acc[side]).to_bits());
@@ -124,7 +124,7 @@ fn score_and_update_bit_identical_to_reference() {
             stack.push(fast);
         }
     }
-    assert!(checked > 5_000, "nur {checked} Stellungen geprüft");
+    assert!(checked > 5_000, "only {checked} positions checked");
 }
 
 #[test]

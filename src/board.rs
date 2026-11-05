@@ -1,8 +1,8 @@
-//! Brett, Züge und Regeln auf Grundlage von `cozy-chess` (MIT).
+//! Board, moves and rules based on `cozy-chess` (MIT).
 //!
-//! Die Suche braucht von einem Zug mehr als `cozy-chess` speichert (bewegte und geschlagene Figur,
-//! Rochade, en passant); [`Move`] hält das fest. Rochaden kodiert `cozy-chess` als „König schlägt
-//! eigenen Turm“; nach außen (UCI, [`Move::to`]) gilt das Zielfeld des Königs.
+//! The search needs more information about a move than `cozy-chess` stores (moved and captured
+//! piece, castling, en passant); [`Move`] records it. `cozy-chess` encodes castling as "king captures
+//! own rook"; externally (UCI, [`Move::to`]) the king's target square is used.
 
 use arrayvec::ArrayVec;
 use cozy_chess::{
@@ -11,10 +11,10 @@ use cozy_chess::{
 };
 pub use cozy_chess::{Color, Piece, Square};
 
-/// Höchstzahl legaler Züge in einer Stellung (bekanntes Maximum 218).
+/// Maximum number of legal moves in a position (known maximum 218).
 const MAX_MOVES: usize = 256;
 
-/// Art eines Zugs.
+/// Kind of a move.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Kind {
     Normal,
@@ -22,7 +22,7 @@ enum Kind {
     Castle,
 }
 
-/// Ein legaler Zug mit bewegter und geschlagener Figur.
+/// A legal move with moved and captured piece.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Move {
     raw: cozy_chess::Move,
@@ -32,13 +32,13 @@ pub struct Move {
 }
 
 impl Move {
-    /// Ausgangsfeld.
+    /// Origin square.
     #[must_use]
     pub fn from(self) -> Square {
         self.raw.from
     }
 
-    /// Zielfeld; bei der Rochade das Zielfeld des Königs.
+    /// Target square; for castling, the king's target square.
     #[must_use]
     pub fn to(self) -> Square {
         if self.kind == Kind::Castle {
@@ -53,49 +53,49 @@ impl Move {
         }
     }
 
-    /// Bewegte Figur.
+    /// Moved piece.
     #[must_use]
     pub fn role(self) -> Piece {
         self.role
     }
 
-    /// Geschlagene Figur (en passant: Bauer).
+    /// Captured piece (en passant: pawn).
     #[must_use]
     pub fn capture(self) -> Option<Piece> {
         self.capture
     }
 
-    /// Umwandlungsfigur.
+    /// Promotion piece.
     #[must_use]
     pub fn promotion(self) -> Option<Piece> {
         self.raw.promotion
     }
 
-    /// Schlagzug (auch en passant).
+    /// Capture (including en passant).
     #[must_use]
     pub fn is_capture(self) -> bool {
         self.capture.is_some()
     }
 
-    /// Umwandlung.
+    /// Promotion.
     #[must_use]
     pub fn is_promotion(self) -> bool {
         self.raw.promotion.is_some()
     }
 
-    /// En-passant-Schlag.
+    /// En passant capture.
     #[must_use]
     pub fn is_en_passant(self) -> bool {
         self.kind == Kind::EnPassant
     }
 
-    /// Rochade.
+    /// Castling.
     #[must_use]
     pub fn is_castle(self) -> bool {
         self.kind == Kind::Castle
     }
 
-    /// UCI-Schreibweise, Rochade als Königszug (`e1g1`).
+    /// UCI notation, castling as a king move (`e1g1`).
     #[must_use]
     pub fn uci(self) -> String {
         let mut text = format!("{}{}", self.from(), self.to());
@@ -106,10 +106,10 @@ impl Move {
     }
 }
 
-/// Zugliste fester Größe (ohne Speicheranforderung und ohne Vorbelegung je Knoten).
+/// Fixed-size move list (no heap allocation and no initialization per node).
 pub type MoveList = ArrayVec<Move, MAX_MOVES>;
 
-/// Zufällige, feste Schlüssel je en-passant-Linie für [`Position::hash`] (splitmix64 von 1..=8).
+/// Random, fixed keys per en passant file for [`Position::hash`] (splitmix64 of 1..=8).
 const EP_KEYS: [u64; 8] = {
     let mut keys = [0; 8];
     let mut index = 0;
@@ -123,14 +123,14 @@ const EP_KEYS: [u64; 8] = {
     keys
 };
 
-/// Eine Stellung (Standardschach).
+/// A position (standard chess).
 #[derive(Clone, Debug, Default)]
 pub struct Position {
     board: Board,
 }
 
 impl Position {
-    /// Stellung aus FEN; `None` bei ungültiger FEN oder illegaler Stellung.
+    /// Position from FEN; `None` for an invalid FEN or an illegal position.
     #[must_use]
     pub fn from_fen(fen: &str) -> Option<Position> {
         Board::from_fen(fen.trim(), false)
@@ -138,43 +138,43 @@ impl Position {
             .map(|board| Position { board })
     }
 
-    /// Das Brett (Figurenstellung und Zustand).
+    /// The board (piece placement and state).
     #[must_use]
     pub fn board(&self) -> &Board {
         &self.board
     }
 
-    /// Seite am Zug.
+    /// Side to move.
     #[must_use]
     pub fn turn(&self) -> Color {
         self.board.side_to_move()
     }
 
-    /// Halbzüge seit dem letzten Schlag oder Bauernzug.
+    /// Plies since the last capture or pawn move.
     #[must_use]
     pub fn halfmoves(&self) -> u32 {
         u32::from(self.board.halfmove_clock())
     }
 
-    /// Steht der König der Seite am Zug im Schach?
+    /// Is the king of the side to move in check?
     #[must_use]
     pub fn is_check(&self) -> bool {
         !self.board.checkers().is_empty()
     }
 
-    /// Matt: im Schach und ohne legalen Zug.
+    /// Checkmate: in check and without a legal move.
     #[must_use]
     pub fn is_checkmate(&self) -> bool {
         self.is_check() && !self.board.generate_moves(|_| true)
     }
 
-    /// Alle legalen Züge.
+    /// All legal moves.
     #[must_use]
     pub fn legal_moves(&self) -> MoveList {
         self.collect(|_| BitBoard::FULL, |_| true)
     }
 
-    /// Alle legalen Schläge (auch en passant) und Umwandlungen, in einem Durchgang.
+    /// All legal captures (including en passant) and promotions, in a single pass.
     #[must_use]
     pub fn noisy_moves(&self) -> MoveList {
         let them = self.board.colors(!self.turn());
@@ -192,19 +192,19 @@ impl Position {
         )
     }
 
-    /// Spielt einen legalen Zug (aus [`Position::legal_moves`] dieser Stellung).
+    /// Plays a legal move (from [`Position::legal_moves`] of this position).
     pub fn play_unchecked(&mut self, mv: Move) {
         self.board.play_unchecked(mv.raw);
     }
 
-    /// Nullzug (Seite am Zug wechselt); `None` im Schach.
+    /// Null move (side to move switches); `None` when in check.
     #[must_use]
     pub fn null_move(&self) -> Option<Position> {
         self.board.null_move().map(|board| Position { board })
     }
 
-    /// Kein Matt mehr möglich: weder Bauern noch Türme noch Damen, und höchstens eine Leichtfigur
-    /// oder nur Läufer auf Feldern einer Farbe.
+    /// Checkmate is no longer possible: no pawns, rooks or queens, and at most one minor piece or
+    /// only bishops on squares of one color.
     #[must_use]
     pub fn is_insufficient_material(&self) -> bool {
         let board = &self.board;
@@ -218,7 +218,7 @@ impl Position {
         (knights | bishops).len() <= 1 || (knights.is_empty() && one_square_color)
     }
 
-    /// Zobrist-Schlüssel nach FIDE-Gleichheit: en passant zählt nur, wenn der Schlag legal möglich ist.
+    /// Zobrist key by FIDE position equality: en passant only counts if the capture is legal.
     #[must_use]
     pub fn hash(&self) -> u64 {
         let base = self.board.hash_without_ep();
@@ -228,7 +228,7 @@ impl Position {
         }
     }
 
-    /// Angreifer der Farbe `color` auf `target` bei Belegung `occupied` (für die Abtauschbewertung).
+    /// Attackers of color `color` on `target` with occupancy `occupied` (for static exchange evaluation).
     #[must_use]
     pub fn attackers(&self, target: Square, color: Color, occupied: BitBoard) -> BitBoard {
         let board = &self.board;
@@ -242,7 +242,7 @@ impl Position {
         attackers & board.colors(color)
     }
 
-    /// Zug aus UCI-Text (`e2e4`, `e7e8q`, Rochade `e1g1`); `None`, wenn er nicht legal ist.
+    /// Move from UCI text (`e2e4`, `e7e8q`, castling `e1g1`); `None` if it is not legal.
     #[must_use]
     pub fn parse_uci(&self, text: &str) -> Option<Move> {
         let raw: cozy_chess::Move = text.parse().ok()?;
@@ -251,13 +251,13 @@ impl Position {
             .find(|mv| mv.from() == raw.from && mv.to() == raw.to && mv.promotion() == raw.promotion)
     }
 
-    /// Feld hinter einem gerade doppelt gezogenen Bauern.
+    /// Square behind a pawn that has just made a double step.
     fn en_passant_square(&self) -> Option<Square> {
         let file = self.board.en_passant()?;
         Some(Square::new(file, Rank::Sixth.relative_to(self.turn())))
     }
 
-    /// Linie eines legal ausführbaren en-passant-Schlags.
+    /// File of an en passant capture that can legally be played.
     fn legal_en_passant_file(&self) -> Option<File> {
         let target = self.en_passant_square()?;
         let us = self.turn();
@@ -274,7 +274,7 @@ impl Position {
             .then(|| target.file())
     }
 
-    /// Erzeugt legale Züge mit Zielfeldern aus `targets(Figur)` und behält die, die `keep` erfüllen.
+    /// Generates legal moves with target squares from `targets(piece)` and keeps those satisfying `keep`.
     fn collect(&self, targets: impl Fn(Piece) -> BitBoard, keep: impl Fn(Move) -> bool) -> MoveList {
         let mut list = MoveList::new();
         self.board.generate_moves(|mut piece_moves| {
@@ -291,7 +291,7 @@ impl Position {
         list
     }
 
-    /// Ergänzt einen `cozy-chess`-Zug um Figur, Schlag und Art.
+    /// Extends a `cozy-chess` move with piece, capture and kind.
     fn describe(&self, raw: cozy_chess::Move, role: Piece) -> Move {
         let us = self.turn();
         let (kind, capture) = if self.board.colors(us).has(raw.to) {

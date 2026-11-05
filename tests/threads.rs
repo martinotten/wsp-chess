@@ -1,5 +1,5 @@
-//! Mehrere Suchthreads und Stoppsignale über UCI und direkt über `search_parallel`.
-#![expect(clippy::unwrap_used, reason = "Test: Fehlschlag soll den Test abbrechen")]
+//! Multiple search threads and stop signals via UCI and directly via `search_parallel`.
+#![expect(clippy::unwrap_used, reason = "test: a failure should abort the test")]
 use std::io::Write;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
@@ -37,7 +37,7 @@ impl Buf {
     }
 }
 
-/// Engine mit `threads` Suchthreads, die nach `buf` schreibt.
+/// Engine with `threads` search threads that writes to `buf`.
 fn engine(threads: usize) -> (Engine, Buf) {
     let buf = Buf::default();
     let out: Box<dyn Write + Send> = Box::new(buf.clone());
@@ -74,16 +74,16 @@ fn infinite_waits_for_stop_and_stop_is_fast() {
     engine.command(&format!("position {POSITION}"));
     engine.command("go infinite");
     thread::sleep(Duration::from_millis(300));
-    assert!(buf.bestmoves().is_empty(), "bestmove vor stop: {}", buf.text());
+    assert!(buf.bestmoves().is_empty(), "bestmove before stop: {}", buf.text());
     let started = Instant::now();
     engine.command("stop");
     let latency = started.elapsed();
-    println!("Abbruch nach stop: {latency:?}");
+    println!("abort after stop: {latency:?}");
     let moves = buf.bestmoves();
     assert_eq!(moves.len(), 1);
     assert!(is_legal(POSITION, &moves[0]));
-    // Ziel 5 ms (Release, ruhiger Rechner: 1-3 ms); großzügige Grenze, damit der Test auf einem belasteten
-    // Rechner nicht flattert. Unter Coverage-Instrumentierung (cargo llvm-cov) ist die Zeit nicht aussagekräftig.
+    // Target 5 ms (release, idle machine: 1-3 ms); generous limit so the test does not flake on a loaded
+    // machine. Under coverage instrumentation (cargo llvm-cov) the timing is not meaningful.
     if !cfg!(coverage) {
         assert!(latency < Duration::from_millis(50), "{latency:?}");
     }
@@ -131,12 +131,12 @@ fn node_budget_is_shared() {
         .unwrap()
         .parse()
         .unwrap();
-    // Überschreitung höchstens Threads × 1.024 Knoten (Prüfintervall) plus der Rest je Thread
-    assert!(total <= 50_000 + 4 * 2 * 1024, "{total} Knoten: {text}");
+    // Overshoot at most threads × 1,024 nodes (check interval) plus the remainder per thread
+    assert!(total <= 50_000 + 4 * 2 * 1024, "{total} nodes: {text}");
     assert_eq!(buf.bestmoves().len(), 1);
 }
 
-/// Externes Stoppflag schon beim Suchbeginn gesetzt: trotzdem ein legaler Zug (Rückfall), kein `None`.
+/// External stop flag already set when the search starts: still a legal move (fallback), not `None`.
 #[test]
 fn stop_flag_set_before_the_search() {
     let net = Arc::new(Net::load("weights/weights.bin").unwrap());

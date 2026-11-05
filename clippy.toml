@@ -3,10 +3,10 @@ allow-expect-in-tests = true
 allow-panic-in-tests = true
 allow-print-in-tests = true
 
-# Lesbarkeit: Grenzen für Komplexität, Länge und Parameter je Funktion (check.sh bricht bei Überschreitung ab)
+# Readability: limits for complexity, length and parameters per function (check.sh fails when exceeded)
 cognitive-complexity-threshold = 15
 too-many-lines-threshold = 60
 too-many-arguments-threshold = 6
 
-# Namen mit nur einem Buchstaben sind verboten (clippy::min_ident_chars), ohne Ausnahmen
+# Single-letter names are forbidden (clippy::min_ident_chars), without exceptions
 allowed-idents-below-min-chars = []

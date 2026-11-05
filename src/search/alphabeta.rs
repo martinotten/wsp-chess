@@ -1,4 +1,4 @@
-//! Hauptsuche: Negamax mit Alpha-Beta, Transpositionstabelle, Nullzug, Futility, PVS und LMR.
+//! Main search: negamax with alpha-beta, transposition table, null move, futility, PVS and LMR.
 
 use super::node::{Best, Candidate, Node, Plan, QNode, TtProbe, Window};
 use super::score::{bound_for, from_tt, mated_in, ply_i32, to_tt};
@@ -6,32 +6,34 @@ use super::{hash, is_quiet, move_code, Feature, Searcher, INF, MATE_BOUND, MAX_P
 use crate::board::{Move, MoveList, Piece, Position};
 use crate::tt::{Bound, Entry};
 
-/// Halbzüge ohne Schlag oder Bauernzug bis zum Remis (50-Züge-Regel).
+/// Plies without a capture or pawn move until a draw (fifty-move rule).
 pub(super) const FIFTY_MOVE_PLIES: u32 = 100;
 
-/// Nullzug: Mindesttiefe, Reduktion und Tiefe, ab der um einen Halbzug mehr reduziert wird.
+/// Null move: minimum depth, reduction, and depth from which one more ply is reduced.
 const NULL_MIN_DEPTH: i32 = 3;
 const NULL_REDUCTION: i32 = 2;
 const NULL_DEEP_DEPTH: i32 = 7;
 
-/// Futility: höchste Resttiefe und Sicherheitsabstand je Halbzug in cp.
+/// Futility: maximum remaining depth and safety margin per ply in cp.
 pub(super) const FUTILITY_MAX_DEPTH: i32 = 2;
 pub(super) const FUTILITY_MARGIN: i32 = 150;
 
-/// LMR: ab dieser Tiefe und Zugnummer wird reduziert, ab den tiefen Werten um zwei Halbzüge.
+/// LMR: reduce from this depth and move number on, by two plies from the deep values on.
 const LMR_MIN_DEPTH: i32 = 3;
 const LMR_MIN_INDEX: usize = 3;
 const LMR_DEEP_DEPTH: i32 = 6;
 const LMR_DEEP_INDEX: usize = 6;
 
-/// Hat der Ziehende Figuren außer Bauern und König? Sonst droht Zugzwang, und der Nullzug täuscht.
+/// Does the side to move have pieces other than pawns and king? Otherwise zugzwang looms and the
+/// null move is misleading.
 fn non_pawn_material(pos: &Position) -> bool {
     let board = pos.board();
     !(board.colors(pos.turn()) & !(board.pieces(Piece::Pawn) | board.pieces(Piece::King))).is_empty()
 }
 
 impl Searcher {
-    /// Negamax mit Alpha-Beta: Wert der Stellung aus Sicht des Ziehenden bei Resttiefe `depth`.
+    /// Negamax with alpha-beta: score of the position from the side to move's point of view at
+    /// remaining depth `depth`.
     pub(super) fn negamax(&mut self, pos: &Position, depth: i32, win: Window, node: Node) -> i32 {
         if !self.enter(node.ply) {
             return 0;
@@ -71,7 +73,7 @@ impl Searcher {
             return 0;
         };
         if best.score == -INF {
-            // alle Züge durch Futility übersprungen
+            // all moves skipped by futility
             return static_eval.unwrap_or(win.alpha).max(win.alpha);
         }
         let bound = bound_for(best.score, win.alpha, win.beta);
@@ -91,12 +93,12 @@ impl Searcher {
         best.score
     }
 
-    /// Remis durch ungenügendes Material oder Wiederholung (nicht an der Wurzel prüfen).
+    /// Draw by insufficient material or repetition (not checked at the root).
     fn is_draw(&self, pos: &Position, key: u64) -> bool {
         pos.is_insufficient_material() || self.is_repetition(key, pos.halfmoves())
     }
 
-    /// Wert ohne Suche: Matt, Patt, 50-Züge-Regel oder größte Suchhöhe erreicht.
+    /// Score without search: mate, stalemate, fifty-move rule or maximum search ply reached.
     pub(super) fn leaf_score(&mut self, pos: &Position, moves: &MoveList, ply: usize) -> Option<i32> {
         if moves.is_empty() {
             return Some(if pos.is_check() { mated_in(ply) } else { 0 });
@@ -110,13 +112,13 @@ impl Searcher {
         None
     }
 
-    /// Schachgebote um einen Halbzug verlängern, höchstens bis zur doppelten Iterationstiefe.
+    /// Extend checks by one ply, at most up to twice the iteration depth.
     fn extension(&self, in_check: bool, ply: usize) -> i32 {
         i32::from(in_check && self.opts.on(Feature::CheckExt) && ply_i32(ply) < 2 * self.root_depth)
     }
 
-    /// Transpositionstabelle: Schnitt, wenn ein ausreichend tiefer Eintrag das Fenster entscheidet.
-    /// Mit PVS werden Knoten der Hauptvariante nie abgeschnitten, damit die Variante vollständig bleibt.
+    /// Transposition table: cutoff if a sufficiently deep entry decides the window. With PVS,
+    /// principal variation nodes are never cut off so that the variation stays complete.
     fn probe_tt(&self, node: Node, depth: i32, win: Window) -> TtProbe {
         let Some(entry) = self.tt.probe(node.key) else {
             return TtProbe::Hint { mv: 0, eval: None };
@@ -140,7 +142,7 @@ impl Searcher {
         }
     }
 
-    /// Nullzug-Pruning, wo erlaubt; gibt den Schnittwert zurück.
+    /// Null-move pruning where allowed; returns the cutoff score.
     fn try_null_move(
         &mut self,
         pos: &Position,
@@ -163,8 +165,8 @@ impl Searcher {
         }
     }
 
-    /// Nullzug: Darf der Gegner zweimal ziehen und reicht es trotzdem für beta, gilt die Stellung als
-    /// zu gut. Gibt den Schnittwert zurück oder `None`.
+    /// Null move: if the opponent may move twice and it is still enough for beta, the position is
+    /// considered too good. Returns the cutoff score or `None`.
     fn null_move(&mut self, pos: &Position, depth: i32, beta: i32, node: Node) -> Option<i32> {
         let child = pos.null_move()?;
         let reduction = NULL_REDUCTION + i32::from(depth >= NULL_DEEP_DEPTH);
@@ -180,11 +182,11 @@ impl Searcher {
         if self.aborted || score < beta {
             return None;
         }
-        // kein ungeprüftes Matt aus einer Nullzug-Suche melden
+        // do not report an unverified mate from a null-move search
         Some(if score >= MATE_BOUND { beta } else { score })
     }
 
-    /// Futility: In geringer Resttiefe und weit unter alpha können ruhige Züge alpha nicht erreichen.
+    /// Futility: at low remaining depth and far below alpha, quiet moves cannot reach alpha.
     pub(super) fn is_futile(&self, depth: i32, win: Window, static_eval: i32) -> bool {
         self.opts.on(Feature::Futility)
             && !win.is_pv()
@@ -193,7 +195,7 @@ impl Searcher {
             && static_eval + FUTILITY_MARGIN * depth <= win.alpha
     }
 
-    /// Durchsucht alle Züge eines Knotens und hebt `win.alpha` an; `None` bei Abbruch.
+    /// Searches all moves of a node and raises `win.alpha`; `None` on abort.
     fn search_moves(
         &mut self,
         pos: &Position,
@@ -241,7 +243,7 @@ impl Searcher {
         Some(best)
     }
 
-    /// Wert eines Kindknotens aus Sicht des Ziehenden.
+    /// Score of a child node from the side to move's point of view.
     fn search_child(&mut self, child: &Position, candidate: &Candidate, plan: &Plan, win: Window) -> i32 {
         let key = hash(child);
         self.path.push(key);
@@ -255,8 +257,8 @@ impl Searcher {
         score
     }
 
-    /// Späterer Zug: zuerst mit Null-Fenster (PVS) und eventuell reduziert (LMR) prüfen. Nur wenn er
-    /// alpha übertrifft, ohne Reduktion und dann mit vollem Fenster nachsuchen.
+    /// Later move: first test with a null window (PVS) and possibly reduced (LMR). Only if it beats
+    /// alpha, re-search without reduction and then with the full window.
     fn search_late_move(
         &mut self,
         child: &Position,
@@ -279,7 +281,7 @@ impl Searcher {
         score
     }
 
-    /// Late Move Reduction: späte, ruhige Züge ohne Schach weniger tief durchsuchen.
+    /// Late move reduction: search late quiet moves that give no check less deeply.
     pub(super) fn lmr_reduction(&self, candidate: &Candidate, plan: &Plan) -> i32 {
         let reduce = self.opts.on(Feature::Lmr)
             && plan.depth >= LMR_MIN_DEPTH

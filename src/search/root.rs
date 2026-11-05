@@ -1,32 +1,32 @@
-//! Wurzel: iterative Vertiefung mit Aspiration-Fenstern, Rückfallzug und Hauptvariante.
+//! Root: iterative deepening with aspiration windows, fallback move and principal variation.
 
 use super::alphabeta::FIFTY_MOVE_PLIES;
 use super::node::{Node, Window};
 use super::{hash, move_code, Feature, Info, Limits, Searcher, Team, INF, MATE, MATE_BOUND, MAX_PLY};
 use crate::board::{Move, Position};
 
-/// Größte Iterationstiefe.
+/// Maximum iteration depth.
 const MAX_DEPTH: i32 = 100;
 
-/// Aspiration: erste halbe Fensterbreite, ab dieser Breite volles Fenster, Mindesttiefe.
+/// Aspiration: initial half window width, width from which the full window is used, minimum depth.
 const ASPIRATION_DELTA: i32 = 40;
 const ASPIRATION_MAX_DELTA: i32 = 1000;
 const ASPIRATION_MIN_DEPTH: i32 = 4;
 
-/// History: Teiler beim Start einer neuen Suche (ältere Erfahrungen verblassen).
+/// History: divisor at the start of a new search (older experience fades).
 const HISTORY_DECAY: i32 = 8;
 
-/// Stand der iterativen Vertiefung zwischen zwei Tiefen.
+/// State of iterative deepening between two depths.
 struct Deepening {
-    /// Bester Zug der letzten fertigen Tiefe (anfangs der Rückfallzug).
+    /// Best move of the last completed depth (initially the fallback move).
     best: Move,
-    /// Bericht der letzten fertigen Tiefe; sein Wert ist die Mitte des nächsten Aspiration-Fensters.
+    /// Report of the last completed depth; its score is the centre of the next aspiration window.
     info: Info,
 }
 
 impl Searcher {
-    /// Iterative Vertiefung. `game` = Schlüssel aller früheren Stellungen der Partie (ohne die
-    /// aktuelle), für Wiederholungen. `on_depth` wird nach jeder fertigen Iteration aufgerufen.
+    /// Iterative deepening. `game` = keys of all earlier positions of the game (excluding the
+    /// current one), for repetitions. `on_depth` is called after each completed iteration.
     pub fn search(
         &mut self,
         pos: &Position,
@@ -38,13 +38,13 @@ impl Searcher {
         self.search_main(pos, game, lim, &team, on_depth)
     }
 
-    /// Neue Suche dieses Suchers als Hauptthread: Generation weiterzählen, gemeinsamer Zustand ab jetzt.
+    /// New search of this searcher as main thread: advance the generation, shared state from now on.
     pub(super) fn begin_team(&mut self) -> Team {
         self.age = self.age.wrapping_add(1);
         Team::new(self.age)
     }
 
-    /// Iterative Vertiefung des Hauptthreads (liefert Zug und Bericht).
+    /// Iterative deepening of the main thread (returns move and report).
     pub(super) fn search_main(
         &mut self,
         pos: &Position,
@@ -70,8 +70,8 @@ impl Searcher {
         self.finish(state)
     }
 
-    /// Iterative Vertiefung eines Helfers (Nummer `index` ≥ 1): ungerade Nummern beginnen eine Tiefe
-    /// tiefer, damit nicht alle Threads dieselbe Tiefe rechnen. Ergebnis nur über die Tabelle.
+    /// Iterative deepening of a helper thread (number `index` ≥ 1): odd numbers start one depth
+    /// deeper so that not all threads compute the same depth. Result only via the table.
     pub(super) fn search_helper(
         &mut self,
         pos: &Position,
@@ -112,7 +112,7 @@ impl Searcher {
         }
     }
 
-    /// Suchpfad für die Wiederholungserkennung: frühere Stellungen der Partie, dann die Wurzel.
+    /// Search path for repetition detection: earlier positions of the game, then the root.
     fn begin_path(&mut self, pos: &Position, game: &[u64]) -> u64 {
         let root_key = hash(pos);
         self.path.clear();
@@ -121,7 +121,7 @@ impl Searcher {
         root_key
     }
 
-    /// Startstand mit dem Rückfallzug; `None`, wenn es keinen legalen Zug gibt.
+    /// Initial state with the fallback move; `None` if there is no legal move.
     fn fallback(&mut self, pos: &Position) -> Option<Deepening> {
         let (best, score) = self.one_ply_best(pos)?;
         let info = Info {
@@ -132,8 +132,9 @@ impl Searcher {
         Some(Deepening { best, info })
     }
 
-    /// Rückfall, falls nicht einmal Tiefe 1 fertig wird: bester Zug nach Netz (ein Halbzug). Nach dem
-    /// ersten Zug ist ein legaler Zug gesichert; danach wird vor jeder Bewertung der Stopp geprüft.
+    /// Fallback in case not even depth 1 completes: best move according to the network (one ply).
+    /// After the first move a legal move is guaranteed; from then on the stop is checked before
+    /// each evaluation.
     fn one_ply_best(&mut self, pos: &Position) -> Option<(Move, i32)> {
         let mut best: Option<(Move, i32)> = None;
         for mv in pos.legal_moves() {
@@ -158,7 +159,7 @@ impl Searcher {
         lim.depth.unwrap_or(MAX_DEPTH).min(MAX_DEPTH)
     }
 
-    /// Durchsucht eine Tiefe und übernimmt ihr Ergebnis; `false`, wenn die Suche abgebrochen wurde.
+    /// Searches one depth and adopts its result; `false` if the search was aborted.
     fn complete_depth(&mut self, pos: &Position, depth: i32, root_key: u64, state: &mut Deepening) -> bool {
         self.root_depth = depth;
         self.root_best = None;
@@ -175,9 +176,9 @@ impl Searcher {
         true
     }
 
-    /// Eine Iteration mit Aspiration-Fenster um `expected` (Wert der vorigen Tiefe); `None` bei
-    /// Abbruch. Fällt der Wert aus dem Fenster, wird es auf dieser Seite verdoppelt und ab
-    /// [`ASPIRATION_MAX_DELTA`] ganz geöffnet.
+    /// One iteration with an aspiration window around `expected` (score of the previous depth);
+    /// `None` on abort. If the score falls outside the window, the window is doubled on that side
+    /// and fully opened from [`ASPIRATION_MAX_DELTA`] on.
     fn iterate(&mut self, pos: &Position, depth: i32, expected: i32, root_key: u64) -> Option<i32> {
         let mut delta = ASPIRATION_DELTA;
         let narrow =
@@ -206,7 +207,7 @@ impl Searcher {
         }
     }
 
-    /// Abbruch in Tiefe 1: Der zuerst durchsuchte Zug ist der Netzbeste und ersetzt den Rückfall.
+    /// Abort at depth 1: the move searched first is the network's best and replaces the fallback.
     fn take_partial_first_depth(&self, state: &mut Deepening) {
         if let Some((mv, score)) = self.root_best {
             state.best = mv;
@@ -228,14 +229,14 @@ impl Searcher {
         }
     }
 
-    /// Hauptvariante aus der Transpositionstabelle, höchstens `max_len` Züge. Sie endet vor einer
-    /// Stellung, die in Partie oder Variante schon vorkam, und dort, wo die Partie nach der 50-Züge-Regel
-    /// oder mangels Material remis wäre.
+    /// Principal variation from the transposition table, at most `max_len` moves. It ends before a
+    /// position that already occurred in the game or the variation, and where the game would be
+    /// drawn by the fifty-move rule or insufficient material.
     fn pv(&self, pos: &Position, first: Move, max_len: usize) -> Vec<Move> {
         let mut line = vec![first];
         let mut current = pos.clone();
         current.play_unchecked(first);
-        // Partiehistorie und Wurzel (self.path nach der Iteration): Wiederholung auch gegen frühere Züge
+        // game history and root (self.path after the iteration): repetition against earlier moves too
         let mut seen = self.path.clone();
         seen.push(hash(pos));
         while line.len() < max_len {
@@ -260,7 +261,7 @@ impl Searcher {
         line
     }
 
-    /// Legaler Zug zur Kodierung `code` (siehe [`move_code`]); `None` für 0 oder unbekannte Züge.
+    /// Legal move for the encoding `code` (see [`move_code`]); `None` for 0 or unknown moves.
     fn find(pos: &Position, code: u16) -> Option<Move> {
         if code == 0 {
             return None;
@@ -268,23 +269,23 @@ impl Searcher {
         pos.legal_moves().into_iter().find(|&mv| move_code(mv) == code)
     }
 
-    /// Eine weitere Tiefe bringt nichts: Matt gefunden oder die Zeit reicht nicht mehr.
+    /// Another depth is pointless: mate found or not enough time left.
     fn deeper_search_pointless(&self, lim: &Limits, done: &Info) -> bool {
         Self::mate_found(done.score, done.depth) || self.time_for_next_depth_used(lim)
     }
 
-    /// Matt gefunden, das innerhalb der Iterationstiefe liegt: tiefer suchen ändert nichts.
+    /// Mate found within the iteration depth: searching deeper changes nothing.
     fn mate_found(score: i32, depth: i32) -> bool {
         score.abs() >= MATE_BOUND && depth >= MATE - score.abs()
     }
 
-    /// Mehr als die halbe Bedenkzeit ist verbraucht: Die nächste Tiefe würde nicht fertig.
+    /// More than half of the thinking time is used up: the next depth would not complete.
     fn time_for_next_depth_used(&self, lim: &Limits) -> bool {
         lim.movetime
             .is_some_and(|movetime| !lim.infinite && self.start.elapsed() > movetime / 2)
     }
 
-    /// Endbericht mit den Zählern der ganzen Suche.
+    /// Final report with the counters of the whole search.
     fn finish(&self, state: Deepening) -> (Option<Move>, Info) {
         let mut info = state.info;
         info.nodes = self.team_nodes();

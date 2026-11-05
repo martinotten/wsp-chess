@@ -1,49 +1,49 @@
-//! Transpositionstabelle: ein Eintrag je Platz, Ersetzung nach Alter und Tiefe, threadsicher ohne `unsafe`.
+//! Transposition table: one entry per slot, replacement by age and depth, thread-safe without `unsafe`.
 //!
-//! Ein Platz besteht aus zwei `AtomicU64`: `data` (gepackter Eintrag) und `check = key ^ data`.
-//! Beim Lesen gilt ein Eintrag nur, wenn `check ^ data` den gesuchten Schlüssel ergibt. Schreiben zwei
-//! Threads gleichzeitig denselben Platz, kann ein gemischtes Paar entstehen; es fällt bei dieser
-//! Prüfung mit sehr hoher Wahrscheinlichkeit heraus (probabilistischer Schutz wie in üblichen
-//! Lazy-SMP-Engines). Was dennoch durchrutscht, ist harmlos: Der Zug wird vor Gebrauch gegen die legalen
-//! Züge geprüft (`Searcher::find`, Zugsortierung), Werte liegen durch die Packung in festen Grenzen.
+//! A slot consists of two `AtomicU64`: `data` (packed entry) and `check = key ^ data`.
+//! On reading, an entry is only valid if `check ^ data` yields the requested key. If two threads
+//! write the same slot at the same time, a mixed pair can arise; it fails this check with very high
+//! probability (probabilistic protection as in common Lazy SMP engines). Anything that still slips
+//! through is harmless: the move is checked against the legal moves before use (`Searcher::find`,
+//! move ordering), and the packing keeps values within fixed bounds.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// Art der gespeicherten Schranke.
+/// Kind of the stored bound.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
 pub enum Bound {
-    /// Leerer Platz.
+    /// Empty slot.
     #[default]
     None,
-    /// Genauer Wert.
+    /// Exact score.
     Exact,
-    /// Untere Schranke (Beta-Schnitt).
+    /// Lower bound (beta cutoff).
     Lower,
-    /// Obere Schranke (kein Zug über Alpha).
+    /// Upper bound (no move above alpha).
     Upper,
 }
 
-/// Ein Eintrag der Tabelle (entpackt).
+/// A table entry (unpacked).
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
 pub struct Entry {
-    /// Zobrist-Schlüssel der Stellung.
+    /// Zobrist key of the position.
     pub key: u64,
-    /// Bester Zug (siehe `search::move_code`, 15 Bit), 0 = keiner.
+    /// Best move (see `search::move_code`, 15 bits), 0 = none.
     pub mv: u16,
-    /// Suchwert, Mattwerte relativ zur Stellung normalisiert (passt in `i16`).
+    /// Search score, mate scores normalized relative to the position (fits in `i16`).
     pub score: i32,
-    /// Statische Bewertung (cp, ±20.000), falls bekannt.
+    /// Static evaluation (cp, ±20,000), if known.
     pub eval: Option<i32>,
-    /// Restsuchtiefe, mit der `score` berechnet wurde (1–127).
+    /// Remaining search depth with which `score` was computed (1–127).
     pub depth: i32,
-    /// Art der Schranke.
+    /// Kind of bound.
     pub bound: Bound,
-    /// Suchgeneration; setzt [`Tt::store`].
+    /// Search generation; set by [`Tt::store`].
     pub age: u8,
 }
 
-/// Lage der Felder in `data` (Bit 0 = niedrigstes): Zug 15, Wert 16, Bewertung 16, Tiefe 7,
-/// Schranke 2, Alter 8 = 64 Bit.
+/// Layout of the fields in `data` (bit 0 = lowest): move 15, score 16, eval 16, depth 7,
+/// bound 2, age 8 = 64 bits.
 const MOVE_BITS: u32 = 15;
 const SCORE_SHIFT: u32 = 15;
 const EVAL_SHIFT: u32 = 31;
@@ -51,7 +51,7 @@ const DEPTH_SHIFT: u32 = 47;
 const BOUND_SHIFT: u32 = 54;
 const AGE_SHIFT: u32 = 56;
 const DEPTH_MAX: i32 = 127;
-/// `eval` ohne Wert.
+/// `eval` without a value.
 const NO_EVAL: i16 = i16::MIN;
 
 impl Bound {
@@ -74,29 +74,29 @@ impl Bound {
     }
 }
 
-/// `i16` als 16 Bit ohne Vorzeichenerweiterung.
+/// `i16` as 16 bits without sign extension.
 fn bits16(value: i16) -> u64 {
     u64::from(value.cast_unsigned())
 }
 
-/// Untere 16 Bit ab `shift` als `i16`.
+/// Lower 16 bits starting at `shift` as `i16`.
 fn field16(data: u64, shift: u32) -> i16 {
     let low = data >> shift & 0xFFFF;
     u16::try_from(low).unwrap_or(0).cast_signed()
 }
 
 impl Entry {
-    /// Packt den Eintrag ohne Schlüssel. Werte außerhalb der Bereiche werden in Debug-Builds gemeldet und
-    /// sonst begrenzt.
+    /// Packs the entry without the key. Out-of-range values are reported in debug builds and
+    /// clamped otherwise.
     fn pack(&self) -> u64 {
-        debug_assert!(u32::from(self.mv) < 1 << MOVE_BITS, "Zugkode {}", self.mv);
-        debug_assert!((1..=DEPTH_MAX).contains(&self.depth), "Tiefe {}", self.depth);
-        debug_assert!(i16::try_from(self.score).is_ok(), "Wert {}", self.score);
+        debug_assert!(u32::from(self.mv) < 1 << MOVE_BITS, "move code {}", self.mv);
+        debug_assert!((1..=DEPTH_MAX).contains(&self.depth), "depth {}", self.depth);
+        debug_assert!(i16::try_from(self.score).is_ok(), "score {}", self.score);
         let score = i16::try_from(self.score).unwrap_or(if self.score > 0 { i16::MAX } else { i16::MIN + 1 });
         let eval = self.eval.map_or(NO_EVAL, |eval| {
             debug_assert!(
                 eval > i32::from(NO_EVAL) && eval <= i32::from(i16::MAX),
-                "Bewertung {eval}"
+                "eval {eval}"
             );
             i16::try_from(eval).unwrap_or(if eval > 0 { i16::MAX } else { NO_EVAL + 1 })
         });
@@ -109,7 +109,7 @@ impl Entry {
             | u64::from(self.age) << AGE_SHIFT
     }
 
-    /// Gegenstück zu [`Entry::pack`].
+    /// Counterpart of [`Entry::pack`].
     fn unpack(key: u64, data: u64) -> Entry {
         let eval = field16(data, EVAL_SHIFT);
         Entry {
@@ -124,20 +124,20 @@ impl Entry {
     }
 }
 
-/// Ein Platz: gepackter Eintrag und `key ^ data`.
+/// A slot: packed entry and `key ^ data`.
 #[derive(Default)]
 struct Slot {
     check: AtomicU64,
     data: AtomicU64,
 }
 
-/// Transpositionstabelle fester Größe (Zweierpotenz), von mehreren Suchthreads gemeinsam nutzbar.
+/// Fixed-size transposition table (power of two), shareable by several search threads.
 pub struct Tt {
     slots: Vec<Slot>,
 }
 
 impl Tt {
-    /// Tabelle mit höchstens `mb` Megabyte (16 Byte je Platz).
+    /// Table of at most `mb` megabytes (16 bytes per slot).
     #[must_use]
     pub fn new(mb: usize) -> Tt {
         let n_slots = (mb.max(1) * 1024 * 1024 / size_of::<Slot>()).next_power_of_two() / 2;
@@ -146,7 +146,7 @@ impl Tt {
         }
     }
 
-    /// Alle Einträge löschen (nur, während keine Suche läuft).
+    /// Clears all entries (only while no search is running).
     pub fn clear(&self) {
         for slot in &self.slots {
             slot.check.store(0, Ordering::Relaxed);
@@ -156,13 +156,13 @@ impl Tt {
 
     #[expect(
         clippy::cast_possible_truncation,
-        reason = "Bits gezielt abgeschnitten (Hash-Index)"
+        reason = "bits truncated on purpose (hash index)"
     )]
     fn idx(&self, key: u64) -> usize {
         (key as usize) & (self.slots.len() - 1)
     }
 
-    /// Liest einen Platz; der Schlüssel ergibt sich aus `check ^ data`.
+    /// Reads a slot; the key is recovered from `check ^ data`.
     fn read(&self, index: usize) -> Entry {
         let slot = &self.slots[index];
         let check = slot.check.load(Ordering::Relaxed);
@@ -170,15 +170,15 @@ impl Tt {
         Entry::unpack(check ^ data, data)
     }
 
-    /// Eintrag zur Stellung `key`, falls vorhanden.
+    /// Entry for position `key`, if present.
     #[must_use]
     pub fn probe(&self, key: u64) -> Option<Entry> {
         let entry = self.read(self.idx(key));
         (entry.bound != Bound::None && entry.key == key).then_some(entry)
     }
 
-    /// Speichert einen Eintrag der Generation `age`. Ersetzt wird ein leerer, gleicher, veralteter oder
-    /// flacherer Eintrag; ohne neuen Zug bleibt der alte Zug derselben Stellung erhalten.
+    /// Stores an entry of generation `age`. An empty, identical, stale or shallower entry is
+    /// replaced; without a new move, the old move of the same position is kept.
     pub fn store(&self, new: Entry, age: u8) {
         let index = self.idx(new.key);
         let entry = self.read(index);
@@ -192,7 +192,7 @@ impl Tt {
         }
     }
 
-    /// Belegung in Promille (Stichprobe der ersten 1000 Plätze, nur Generation `age`).
+    /// Occupancy in permille (sample of the first 1,000 slots, generation `age` only).
     #[must_use]
     pub fn hashfull(&self, age: u8) -> usize {
         (0..1000.min(self.slots.len()))

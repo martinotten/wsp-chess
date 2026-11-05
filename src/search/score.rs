@@ -1,4 +1,5 @@
-//! Werte: Netzausgabe in Centipawn, Mattwerte und ihre Umrechnung für die Transpositionstabelle.
+//! Scores: network output in centipawns, mate scores and their conversion for the transposition
+//! table.
 
 use super::{MATE, MATE_BOUND};
 use crate::tt::Bound;
@@ -9,17 +10,20 @@ pub(super) fn ply_i32(ply: usize) -> i32 {
     i32::try_from(ply).unwrap_or(i32::MAX)
 }
 
-/// Wert für „am Zug und matt“ auf Höhe `ply`.
+/// Score for "to move and mated" at ply `ply`.
 pub(super) fn mated_in(ply: usize) -> i32 {
     -(MATE - ply_i32(ply))
 }
 
-#[expect(clippy::cast_possible_truncation, reason = "Wert vorher auf ±20000 begrenzt")]
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "value clamped to ±20000 beforehand"
+)]
 pub(super) fn to_cp(pawns: f32) -> i32 {
     (pawns * 100.0).round().clamp(-EVAL_CLAMP, EVAL_CLAMP) as i32
 }
 
-/// Mattwert beim Speichern auf die Knotenhöhe normalisieren („matt in n ab hier“).
+/// Normalise a mate score to the node's ply when storing ("mate in n from here").
 pub(super) fn to_tt(score: i32, ply: usize) -> i32 {
     let height = ply_i32(ply);
     if score >= MATE_BOUND {
@@ -31,7 +35,7 @@ pub(super) fn to_tt(score: i32, ply: usize) -> i32 {
     }
 }
 
-/// Gegenstück zu [`to_tt`]: gespeicherten Mattwert auf die aktuelle Höhe umrechnen.
+/// Counterpart to [`to_tt`]: convert a stored mate score to the current ply.
 pub(super) fn from_tt(score: i32, ply: usize) -> i32 {
     let height = ply_i32(ply);
     if score >= MATE_BOUND {
@@ -43,7 +47,7 @@ pub(super) fn from_tt(score: i32, ply: usize) -> i32 {
     }
 }
 
-/// Art des Werts für die Transpositionstabelle, gemessen am Fenster beim Betreten des Knotens.
+/// Kind of score for the transposition table, measured against the window on entering the node.
 pub(super) fn bound_for(best: i32, alpha_at_entry: i32, beta: i32) -> Bound {
     if best >= beta {
         Bound::Lower

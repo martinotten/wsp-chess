@@ -1,10 +1,10 @@
-//! Verhaltensgleichheit der Suche: Knotenzahl, bester Zug und Wert für die Bench-Stellungen bei fester
-//! Tiefe, einmal mit Standardeinstellungen und einmal je umgeschalteter Technik.
+//! Behavioural equivalence of the search: node count, best move and score for the bench positions at fixed
+//! depth, once with default settings and once per toggled technique.
 //!
-//! Die Suche ist bei fester Tiefe deterministisch. Jede Änderung, die auch nur eine Suchentscheidung
-//! verschiebt, ändert die Knotenzahl. Ein reiner Umbau muss diesen Test also unverändert bestehen.
-//! Bei gewollter Verhaltensänderung neu schreiben: `GOLDEN_UPDATE=1 cargo test --release --test golden`.
-#![expect(clippy::unwrap_used, reason = "Test: Fehlschlag soll den Test abbrechen")]
+//! The search is deterministic at fixed depth. Any change that shifts even a single search decision
+//! changes the node count. A pure refactoring must therefore pass this test unchanged.
+//! After an intended behaviour change, rewrite it: `GOLDEN_UPDATE=1 cargo test --release --test golden`.
+#![expect(clippy::unwrap_used, reason = "test: a failure should abort the test")]
 use std::fmt::Write;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -16,7 +16,7 @@ use wsp_chess::uci::BENCH;
 const GOLDEN: &str = "tests/golden.txt";
 const DEPTH: i32 = 5;
 
-/// Standard, jede Technik umgeschaltet (an -> aus, `QChecks` aus -> an).
+/// Default, then each technique toggled (on -> off, `QChecks` off -> on).
 fn configs() -> Vec<(String, Opts)> {
     let mut out = vec![("default".to_string(), Opts::default())];
     for &(feature, name) in &Feature::ALL {
@@ -57,7 +57,7 @@ fn search_is_unchanged() {
     }
     let want = std::fs::read_to_string(GOLDEN).unwrap();
     for (expected, actual) in want.lines().zip(now.lines()) {
-        assert_eq!(expected, actual, "Suche verhält sich anders als in {GOLDEN}");
+        assert_eq!(expected, actual, "search behaves differently than in {GOLDEN}");
     }
     assert_eq!(want.lines().count(), now.lines().count());
 }

@@ -1,5 +1,5 @@
-//! UCI-Ablauf und Suchergebnisse.
-#![expect(clippy::unwrap_used, reason = "Test: Fehlschlag soll den Test abbrechen")]
+//! UCI protocol flow and search results.
+#![expect(clippy::unwrap_used, reason = "test: a failure should abort the test")]
 use std::io::{Cursor, Write};
 use std::sync::{Arc, Mutex};
 use wsp_chess::search::MATE;
@@ -48,7 +48,7 @@ fn finds_mate_in_one_and_two() {
     let out = session("position fen 6k1/5ppp/8/8/8/8/1Q3PPP/1R4K1 w - - 0 1\ngo depth 3\nisready\n");
     assert_eq!(bestmove(&out), "b2b8", "{out}");
     assert!(out.contains("score mate 1"), "{out}");
-    // Grundreihenmatt in 2: 1. Te8+ Txe8 2. Txe8#
+    // Back-rank mate in 2: 1. Re8+ Rxe8 2. Rxe8#
     let out2 = session("position fen r5k1/5ppp/8/8/8/8/4RPPP/4R1K1 w - - 0 1\ngo depth 6\nisready\n");
     assert!(out2.contains("score mate 2"), "{out2}");
 }
@@ -106,17 +106,17 @@ fn auxiliary_commands() {
 
 #[test]
 fn invalid_input_is_reported_and_quit_ends_the_session() {
-    let out = session("setoption name Unbekannt value 1\nposition startpos moves e2e5\nquit\nisready\n");
-    assert!(out.contains("info string unbekannte Option Unbekannt"), "{out}");
-    assert!(out.contains("info string ungültige Stellung"), "{out}");
-    assert!(!out.contains("readyok"), "nach quit keine Antwort mehr: {out}");
+    let out = session("setoption name Bogus value 1\nposition startpos moves e2e5\nquit\nisready\n");
+    assert!(out.contains("info string unknown option Bogus"), "{out}");
+    assert!(out.contains("info string invalid position"), "{out}");
+    assert!(!out.contains("readyok"), "no more responses after quit: {out}");
 }
 
 #[test]
 fn missing_weights_are_reported() {
-    let out = session("setoption name Weights value /gibt/es/nicht.bin\nisready\n");
+    let out = session("setoption name Weights value /does/not/exist.bin\nisready\n");
     assert!(
-        out.contains("info string Fehler: Gewichtsdatei nicht lesbar"),
+        out.contains("info string error: weights file not readable"),
         "{out}"
     );
 }

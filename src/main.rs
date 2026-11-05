@@ -1,4 +1,4 @@
-//! `wsp-chess`: UCI-Engine mit dem handgeschriebenen Schachnetz als Bewertung.
+//! `wsp-chess`: UCI engine using the hand-written chess network as its evaluation.
 
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};

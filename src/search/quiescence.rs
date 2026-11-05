@@ -1,4 +1,5 @@
-//! Ruhesuche: Schläge und Umwandlungen bis zur ruhigen Stellung, im Schach alle Abwehrzüge.
+//! Quiescence search: captures and promotions until the position is quiet, all evasions when in
+//! check.
 
 use super::node::{QNode, Window};
 use super::score::mated_in;
@@ -6,7 +7,7 @@ use super::{is_quiet, Feature, Searcher, INF, MAX_PLY};
 use crate::board::{Move, MoveList, Position};
 use crate::exchange::{see, see_quiet, victim_value};
 
-/// Delta-Pruning: Sicherheitsabstand in cp.
+/// Delta pruning: safety margin in cp.
 const DELTA_MARGIN: i32 = 200;
 
 fn gives_check(pos: &Position, mv: Move) -> bool {
@@ -16,7 +17,8 @@ fn gives_check(pos: &Position, mv: Move) -> bool {
 }
 
 impl Searcher {
-    /// Ruhesuche: nur Schläge und Umwandlungen (im Schach alle Züge), bis die Stellung ruhig ist.
+    /// Quiescence search: only captures and promotions (all moves when in check) until the
+    /// position is quiet.
     pub(super) fn qsearch(&mut self, pos: &Position, mut win: Window, at: QNode) -> i32 {
         let ply = at.ply;
         if !self.enter(ply) {
@@ -33,7 +35,7 @@ impl Searcher {
             return self.qsearch_evasions(pos, win, at);
         }
         let moves = self.quiescence_moves(pos, at.qdepth);
-        // Stand-pat: Der Ziehende muss nicht schlagen, die statische Bewertung ist eine Untergrenze
+        // stand pat: the side to move need not capture, the static evaluation is a lower bound
         let stand = self.eval(pos, ply);
         if stand >= win.beta {
             return stand;
@@ -42,7 +44,7 @@ impl Searcher {
         self.qsearch_moves(pos, &moves, win, at, Some(stand))
     }
 
-    /// Ruhesuche im Schach: alle Abwehrzüge, kein Stand-pat.
+    /// Quiescence search in check: all evasions, no stand pat.
     fn qsearch_evasions(&mut self, pos: &Position, win: Window, at: QNode) -> i32 {
         let moves = pos.legal_moves();
         if moves.is_empty() {
@@ -51,7 +53,7 @@ impl Searcher {
         self.qsearch_moves(pos, &moves, win, at, None)
     }
 
-    /// Schläge, ruhige Umwandlungen und (mit [`Feature::QChecks`], erste Ebene) sichere Schachgebote.
+    /// Captures, quiet promotions and (with [`Feature::QChecks`], first level) safe checks.
     fn quiescence_moves(&self, pos: &Position, qdepth: u32) -> MoveList {
         let mut moves = pos.noisy_moves();
         if qdepth == 0 && self.opts.on(Feature::QChecks) {
@@ -64,7 +66,7 @@ impl Searcher {
         moves
     }
 
-    /// Durchsucht die Züge der Ruhesuche. `stand` = Stand-pat-Wert, `None` im Schach.
+    /// Searches the quiescence moves. `stand` = stand-pat score, `None` when in check.
     fn qsearch_moves(
         &mut self,
         pos: &Position,
@@ -96,8 +98,8 @@ impl Searcher {
         best
     }
 
-    /// Schlag, der in der Ruhesuche nicht lohnt: Selbst der Gewinn der Figur hebt den Wert nicht über
-    /// alpha (Delta-Pruning), oder der Abtausch verliert Material (SEE).
+    /// Capture not worth searching in the quiescence search: even winning the piece does not raise
+    /// the score above alpha (delta pruning), or the exchange loses material (SEE).
     fn skip_capture(&self, pos: &Position, mv: Move, stand: i32, alpha: i32) -> bool {
         if mv.is_promotion() || !mv.is_capture() {
             return false;

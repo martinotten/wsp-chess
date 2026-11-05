@@ -1,9 +1,9 @@
-//! Suchfenster und Knotendaten der Suche.
+//! Search window and node data of the search.
 
 use super::INF;
 use crate::board::Move;
 
-/// Suchfenster.
+/// Search window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Window {
     pub(super) alpha: i32,
@@ -16,7 +16,7 @@ impl Window {
         beta: INF,
     };
 
-    /// Fenster aus Sicht des Gegners.
+    /// Window from the opponent's point of view.
     pub(super) fn flip(self) -> Window {
         Window {
             alpha: -self.beta,
@@ -24,7 +24,7 @@ impl Window {
         }
     }
 
-    /// Null-Fenster: prüft nur, ob ein Wert über `alpha` liegt.
+    /// Null window: only tests whether a score lies above `alpha`.
     pub(super) fn null(alpha: i32) -> Window {
         Window {
             alpha,
@@ -32,7 +32,7 @@ impl Window {
         }
     }
 
-    /// Fenster um einen erwarteten Wert.
+    /// Window around an expected score.
     pub(super) fn around(score: i32, delta: i32) -> Window {
         Window {
             alpha: score - delta,
@@ -40,20 +40,20 @@ impl Window {
         }
     }
 
-    /// Breiter als ein Null-Fenster: Knoten der Hauptvariante.
+    /// Wider than a null window: principal variation node.
     pub(super) fn is_pv(self) -> bool {
         self.beta - self.alpha > 1
     }
 }
 
-/// Lage eines Knotens im Suchbaum.
+/// Location of a node in the search tree.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Node {
-    /// Abstand zur Wurzel in Halbzügen.
+    /// Distance from the root in plies.
     pub(super) ply: usize,
-    /// Zobrist-Schlüssel der Stellung.
+    /// Zobrist key of the position.
     pub(super) key: u64,
-    /// Nullzug erlaubt (nicht an der Wurzel, nicht zweimal hintereinander).
+    /// Null move allowed (not at the root, not twice in a row).
     pub(super) can_null: bool,
 }
 
@@ -87,12 +87,12 @@ impl Node {
     }
 }
 
-/// Lage eines Knotens der Ruhesuche.
+/// Location of a quiescence search node.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct QNode {
-    /// Abstand zur Wurzel in Halbzügen.
+    /// Distance from the root in plies.
     pub(super) ply: usize,
-    /// Höhe innerhalb der Ruhesuche (0 = erste Ebene).
+    /// Ply within the quiescence search (0 = first level).
     pub(super) qdepth: u32,
 }
 
@@ -109,44 +109,45 @@ impl QNode {
     }
 }
 
-/// Was beim Durchsuchen der Züge eines Knotens gleich bleibt.
+/// What stays the same while searching the moves of a node.
 pub(super) struct Plan {
     pub(super) node: Node,
     pub(super) depth: i32,
     pub(super) in_check: bool,
-    /// Aussichtsloser Knoten: statische Bewertung weit unter alpha, ruhige Züge holen das nicht auf (Futility).
+    /// Hopeless node: static evaluation far below alpha, quiet moves cannot make up for it
+    /// (futility).
     pub(super) futile: bool,
     pub(super) tt_move: u16,
 }
 
-/// Ein Zug in der Zugliste eines Knotens.
+/// A move in a node's move list.
 pub(super) struct Candidate {
     pub(super) mv: Move,
     pub(super) code: u16,
-    /// Position in der sortierten Liste (0 = erster).
+    /// Position in the sorted list (0 = first).
     pub(super) index: usize,
     pub(super) quiet: bool,
     pub(super) gives_check: bool,
 }
 
 impl Candidate {
-    /// Ruhiger Zug ohne Schach, nicht der erste: kann den Wert eines aussichtslosen Knotens nicht
-    /// mehr retten (Futility, siehe [`Plan::futile`]). Der erste Zug wird immer durchsucht, damit
-    /// der Knoten einen Wert bekommt.
+    /// Quiet move without check, not the first: can no longer rescue the score of a hopeless node
+    /// (futility, see [`Plan::futile`]). The first move is always searched so that the node gets a
+    /// score.
     pub(super) fn cannot_rescue_hopeless_node(&self) -> bool {
         self.index > 0 && self.quiet && !self.gives_check
     }
 }
 
-/// Ergebnis der Transpositionstabelle für einen Knoten.
+/// Transposition table result for a node.
 pub(super) enum TtProbe {
-    /// Gespeicherter Wert reicht, der Knoten ist erledigt.
+    /// Stored score suffices, the node is done.
     Cutoff(i32),
-    /// Hinweise für die Suche: bester Zug (0 = keiner) und statische Bewertung.
+    /// Hints for the search: best move (0 = none) and static evaluation.
     Hint { mv: u16, eval: Option<i32> },
 }
 
-/// Bester Zug eines Knotens.
+/// Best move of a node.
 pub(super) struct Best {
     pub(super) score: i32,
     pub(super) code: u16,

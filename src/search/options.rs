@@ -1,37 +1,37 @@
-//! Schalter für die Suchtechniken, Grenzen einer Suche und ihr Ergebnis.
+//! Switches for the search techniques, limits of a search and its result.
 
 use crate::board::Move;
 use std::time::Duration;
 
-/// Abschaltbare Suchtechniken.
+/// Search techniques that can be switched off.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Feature {
-    /// Principal Variation Search (Null-Fenster nach dem ersten Zug).
+    /// Principal Variation Search (null window after the first move).
     Pvs,
-    /// Suchfenster um den Wert der vorigen Iteration.
+    /// Search window around the score of the previous iteration.
     Aspiration,
-    /// Nullzug-Pruning.
+    /// Null-move pruning.
     NullMove,
     /// Late Move Reductions.
     Lmr,
-    /// Futility-Pruning in Tiefe 1–2.
+    /// Futility pruning at depth 1–2.
     Futility,
-    /// Schläge mit negativem Abtausch in der Ruhesuche überspringen.
+    /// Skip captures with a losing exchange in the quiescence search.
     SeePrune,
-    /// Delta-Pruning in der Ruhesuche.
+    /// Delta pruning in the quiescence search.
     Delta,
-    /// Schachgebote um einen Halbzug verlängern.
+    /// Extend checks by one ply.
     CheckExt,
-    /// Killerzüge in der Zugsortierung.
+    /// Killer moves in move ordering.
     Killers,
-    /// History-Heuristik in der Zugsortierung.
+    /// History heuristic in move ordering.
     History,
-    /// Ruhige Schachgebote in der ersten Ebene der Ruhesuche (Standard: aus).
+    /// Quiet checks at the first level of the quiescence search (default: off).
     QChecks,
 }
 
 impl Feature {
-    /// Alle Techniken mit ihrem UCI-Namen.
+    /// All techniques with their UCI name.
     pub const ALL: [(Feature, &'static str); 11] = [
         (Feature::Pvs, "PVS"),
         (Feature::Aspiration, "Aspiration"),
@@ -46,7 +46,7 @@ impl Feature {
         (Feature::QChecks, "QChecks"),
     ];
 
-    /// Technik zum UCI-Namen (ohne Beachtung der Groß-/Kleinschreibung).
+    /// Technique for a UCI name (case-insensitive).
     #[must_use]
     pub fn by_name(name: &str) -> Option<Feature> {
         Feature::ALL
@@ -56,7 +56,7 @@ impl Feature {
     }
 }
 
-/// Ein-/Ausschalter je [`Feature`]; Standard: alle an außer [`Feature::QChecks`].
+/// On/off switch per [`Feature`]; default: all on except [`Feature::QChecks`].
 #[derive(Clone, Copy, Debug)]
 pub struct Opts([bool; Feature::ALL.len()]);
 
@@ -69,48 +69,48 @@ impl Default for Opts {
 }
 
 impl Opts {
-    /// Ist die Technik eingeschaltet?
+    /// Is the technique enabled?
     #[must_use]
     pub fn on(&self, feature: Feature) -> bool {
         self.0[feature as usize]
     }
 
-    /// Schaltet die Technik ein oder aus.
+    /// Switches the technique on or off.
     pub fn set(&mut self, feature: Feature, value: bool) {
         self.0[feature as usize] = value;
     }
 }
 
-/// Grenzen einer Suche.
+/// Limits of a search.
 #[derive(Clone, Copy, Default, Debug)]
 pub struct Limits {
-    /// Bedenkzeit.
+    /// Thinking time.
     pub movetime: Option<Duration>,
-    /// Höchste Iterationstiefe.
+    /// Maximum iteration depth.
     pub depth: Option<i32>,
-    /// Höchstzahl Knoten.
+    /// Maximum number of nodes.
     pub nodes: Option<u64>,
-    /// Bis zum Abbruch von außen suchen.
+    /// Search until stopped from outside.
     pub infinite: bool,
 }
 
-/// Ergebnis einer abgeschlossenen Iteration.
+/// Result of a completed iteration.
 #[derive(Clone, Debug, Default)]
 pub struct Info {
-    /// Iterationstiefe.
+    /// Iteration depth.
     pub depth: i32,
-    /// Größte erreichte Höhe (mit Ruhesuche).
+    /// Maximum ply reached (including quiescence search).
     pub seldepth: usize,
-    /// Wert in cp bzw. Mattwert.
+    /// Score in cp or mate score.
     pub score: i32,
-    /// Besuchte Knoten.
+    /// Nodes visited.
     pub nodes: u64,
-    /// Netzbewertungen.
+    /// Network evaluations.
     pub evals: u64,
-    /// Bisherige Suchzeit.
+    /// Search time so far.
     pub time: Duration,
-    /// Hauptvariante.
+    /// Principal variation.
     pub pv: Vec<Move>,
-    /// Belegung der Transpositionstabelle in Promille.
+    /// Transposition table usage in per mille.
     pub hashfull: usize,
 }

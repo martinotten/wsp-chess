@@ -1,10 +1,10 @@
-//! Schach-Engine mit dem handgeschriebenen Netz (Weight-Space Programming) als Bewertung.
+//! Chess engine using the hand-written network (weight-space programming) as its evaluation.
 //!
-//! - [`eval`] – dünne, inkrementelle Auswertung des Netzes
-//! - [`exchange`] – Materialwerte und Abtauschbewertung (SEE)
-//! - [`search`] – Alpha-Beta-Suche mit abschaltbaren Techniken
-//! - [`tt`] – Transpositionstabelle
-//! - [`uci`] – UCI-Protokoll
+//! - [`eval`] – sparse, incremental evaluation of the network
+//! - [`exchange`] – material values and static exchange evaluation (SEE)
+//! - [`search`] – alpha-beta search with switchable techniques
+//! - [`tt`] – transposition table
+//! - [`uci`] – UCI protocol
 
 pub mod board;
 pub mod eval;

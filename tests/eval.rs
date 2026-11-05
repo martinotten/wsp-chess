@@ -1,5 +1,6 @@
-//! Rust-Bewertung gegen die Python-Sollwerte aus `export_rs.py` (`weights_check.json`).
-#![expect(clippy::unwrap_used, reason = "Test: Fehlschlag soll den Test abbrechen")]
+//! Rust evaluation against the Python reference values from `generator/export.py` (`weights/weights_check.json`,
+//! frozen test data from the original project, no longer regenerated).
+#![expect(clippy::unwrap_used, reason = "test: a failure should abort the test")]
 use serde_json::Value;
 use wsp_chess::board::Position;
 use wsp_chess::eval::Net;
@@ -25,23 +26,23 @@ fn eval_matches_python() {
         let score = f64::from(net.score(&pos(position["fen"].as_str().unwrap())));
         worst = worst.max((score - position["s"].as_f64().unwrap()).abs());
     }
-    // Zugfolgen mit Sonderzügen: Stellungen durch Ziehen erzeugen (nicht aus FEN)
+    // Move sequences with special moves: create positions by playing moves (not from FEN)
     for sequence in check["sequences"].as_array().unwrap() {
         let mut position = pos(sequence["fen"].as_str().unwrap());
-        let soll: Vec<f64> = sequence["s"]
+        let expected: Vec<f64> = sequence["s"]
             .as_array()
             .unwrap()
             .iter()
             .map(|value| value.as_f64().unwrap())
             .collect();
-        worst = worst.max((f64::from(net.score(&position)) - soll[0]).abs());
+        worst = worst.max((f64::from(net.score(&position)) - expected[0]).abs());
         for (ply, uci_text) in sequence["moves"].as_array().unwrap().iter().enumerate() {
             let mv = position.parse_uci(uci_text.as_str().unwrap()).unwrap();
             position.play_unchecked(mv);
-            let deviation = (f64::from(net.score(&position)) - soll[ply + 1]).abs();
+            let deviation = (f64::from(net.score(&position)) - expected[ply + 1]).abs();
             assert!(
                 deviation < 1e-3,
-                "Folge {} Zug {ply}: |Δs| = {deviation}",
+                "sequence {} move {ply}: |Δs| = {deviation}",
                 sequence["fen"]
             );
             worst = worst.max(deviation);
@@ -53,7 +54,7 @@ fn eval_matches_python() {
 
 #[test]
 fn see_values() {
-    // Bauer schlägt gedeckten Springer: +300 - 100 = +200 (Springer wird geschlagen, Bauer zurück)
+    // Pawn captures a defended knight: +300 - 100 = +200 (knight is captured, pawn is recaptured)
     let position = pos("4k3/8/2p5/3n4/4P3/8/8/4K3 w - - 0 1");
     let pawn_capture = position
         .legal_moves()
@@ -61,7 +62,7 @@ fn see_values() {
         .find(|candidate| search::uci(*candidate) == "e4d5")
         .unwrap();
     assert_eq!(see(&position, pawn_capture), 200);
-    // Dame schlägt von Bauer gedeckten Bauern: 100 - 900 = -800
+    // Queen captures a pawn defended by a pawn: 100 - 900 = -800
     let other_position = pos("4k3/8/2p5/3p4/8/8/3Q4/4K3 w - - 0 1");
     let queen_capture = other_position
         .legal_moves()
@@ -76,7 +77,7 @@ fn perft_reference() {
     assert_eq!(perft(&Position::default(), 5), 4_865_609);
     let kiwipete = pos("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1");
     assert_eq!(perft(&kiwipete, 4), 4_085_603);
-    // Stellungen 3 bis 6 aus dem Chess Programming Wiki (Perft Results)
+    // Positions 3 to 6 from the Chess Programming Wiki (Perft Results)
     for (fen, depth, nodes) in [
         ("8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", 5, 674_624),
         (
