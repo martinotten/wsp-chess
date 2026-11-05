@@ -21,9 +21,10 @@ Bausteine (Reihenfolge des Bauplans):
     <=Bauer, <=Leichtfigur, <=Turm, alle.
     h2: relu(cnt - 1). Damit ist der Indikator "mind. ein Angreifer" = cnt - relu(cnt - 1).
  4. h3, aus Indikatoren A (Gegner greift an) und D (eigene Seite deckt):
-        hängt         relu(x[t,b] + A_alle(b) - D(b) - 1)                Verlust = Wert(t)
+        hängt         relu(x[t,b] + A_alle(b) - D(b) - 1)                Ausgang -0,2 Wert(t) eigene, +0,8 gegnerische
         billiger bedroht relu(x[t,b] + A_<=l(b) + D(b) - 2)                 Verlust teleskopiert
-    so dass der Verlust insgesamt Wert(t) - Wert(billigster Angreifer) ist, wenn gedeckt.
+    so dass der Verlust insgesamt Wert(t) - Wert(billigster Angreifer) ist, wenn gedeckt (Faktor wie bei hängt).
+    A und D sind Indikatoren 0/1 ("mind. ein Angreifer"), keine Zahlen.
     Königszone: relu(10 x[K,k] + sum_{z Nachbar von k} A(z) - 10) = Zahl angegriffener Felder.
 
 Lernfähigkeit: normierte Ausgabe, Leaky-ReLU, weiche Königsphase, je Schicht freie
@@ -122,12 +123,17 @@ class Builder:
         self.units = {"h1": [], "h2": [], "h3": []}
         self.exact = {}
         self.out = {}             # Schlüssel -> Liste (Gewicht, Gruppe)
+        self.info = {}            # Schlüssel -> Art und Ort (Sicht des Ziehenden), siehe unit()
 
-    def unit(self, layer, expr, bias, group, name):
+    def unit(self, layer, expr, bias, group, name, info):
+        """info: Art und Ort des Musters für Erklärungen, Felder in Netzkoordinaten (eigene Seite unten):
+        {"kind": ..., "side": OWN/OPP, "piece": t?, "cls": c?, "place": ("ray", a, b) | ("square", s) |
+        ("file", f) | ("zone", k)}. Ändert keine Gewichte."""
         expr = dict(expr)
         bias += expr.pop(("const", 0), 0.0)
         self.units[layer].append((expr, bias, group, name))
         key = (layer, len(self.units[layer]) - 1)
+        self.info[key] = info
         a = self.alpha
         e = {k: -a / (1 - a) * v for k, v in expr.items()}
         e[key] = e.get(key, 0.0) + 1 / (1 - a)
@@ -218,7 +224,8 @@ def construct(disable=(), seed=0, n_free=N_FREE, alpha=LEAKY, scale=None, extra=
                             for s in between:
                                 e = add(e, occ(s), coefs=[1, -1])
                             u = bld.unit("h1", e, 0.0, "mobility",
-                                         f"{'own' if side == OWN else 'opp'} {NAMES[t]} {a}->{b}")
+                                         f"{'own' if side == OWN else 'opp'} {NAMES[t]} {a}->{b}",
+                                         {"kind": "ray", "side": side, "piece": t, "place": ("ray", a, b)})
                             att[side][t][b] = add(att[side][t][b], bld.ref(u))
                             out(u, sign[side] * MOB[t], "mobility")
                         between.append(b)
@@ -233,7 +240,8 @@ def construct(disable=(), seed=0, n_free=N_FREE, alpha=LEAKY, scale=None, extra=
             e = {}
             for r in range(8):
                 e = add(e, X(side, P, sq(f, r)))
-            u = bld.unit("h1", e, -1.0, "pawns", f"{sname} doubled file {f}")
+            u = bld.unit("h1", e, -1.0, "pawns", f"{sname} doubled file {f}",
+                         {"kind": "doubled", "side": side, "piece": P, "place": ("file", f)})
             out(u, -0.2 * sign[side], "pawns")
         for s in range(8, 56):
             f, r = fr(s)
@@ -242,7 +250,8 @@ def construct(disable=(), seed=0, n_free=N_FREE, alpha=LEAKY, scale=None, extra=
                 for rr in range(8):
                     if sq(ff, rr) is not None:
                         e = add(e, X(side, P, sq(ff, rr), -1.0))
-            u = bld.unit("h1", e, 0.0, "pawns", f"{sname} isolated {s}")
+            u = bld.unit("h1", e, 0.0, "pawns", f"{sname} isolated {s}",
+                         {"kind": "isolated", "side": side, "piece": P, "place": ("square", s)})
             out(u, -0.15 * sign[side], "pawns")
             e = X(side, P, s)
             ahead = range(r + 1, 8) if side == OWN else range(0, r)
@@ -250,7 +259,8 @@ def construct(disable=(), seed=0, n_free=N_FREE, alpha=LEAKY, scale=None, extra=
                 for rr in ahead:
                     if sq(ff, rr) is not None:
                         e = add(e, X(other, P, sq(ff, rr), -1.0))
-            u = bld.unit("h1", e, 0.0, "pawns", f"{sname} passed {s}")
+            u = bld.unit("h1", e, 0.0, "pawns", f"{sname} passed {s}",
+                         {"kind": "passed", "side": side, "piece": P, "place": ("square", s)})
             rel = r if side == OWN else 7 - r
             out(u, PASSED[rel] * sign[side], "pawns")
 
@@ -264,7 +274,8 @@ def construct(disable=(), seed=0, n_free=N_FREE, alpha=LEAKY, scale=None, extra=
                 for s in range(64):
                     e = add(e, X(other, t, s, -w))
             own_k = k if side == OWN else mirror(k)
-            u = bld.unit("h1", e, 0.0, "king_eg", f"{'own' if side == OWN else 'opp'} K endgame {k}")
+            u = bld.unit("h1", e, 0.0, "king_eg", f"{'own' if side == OWN else 'opp'} K endgame {k}",
+                         {"kind": "king_phase", "side": side, "piece": K, "place": ("square", k)})
             out(u, sign[side] * (king_eg(own_k) - king_mg(own_k)), "king_eg")
 
     # -------- Bauernschild (h1)
@@ -279,7 +290,8 @@ def construct(disable=(), seed=0, n_free=N_FREE, alpha=LEAKY, scale=None, extra=
                     s = sq(ff, back + d * fwd)
                     if s is not None:
                         e = add(e, X(side, P, s))
-            u = bld.unit("h1", e, -10.0, "king_safety", f"{'own' if side == OWN else 'opp'} shield {k}")
+            u = bld.unit("h1", e, -10.0, "king_safety", f"{'own' if side == OWN else 'opp'} shield {k}",
+                         {"kind": "shield", "side": side, "piece": K, "place": ("square", k)})
             out(u, 0.1 * sign[side], "king_safety")
 
     free_units(bld, "h1", 768, 0.1, n_free, rng)
@@ -296,7 +308,8 @@ def construct(disable=(), seed=0, n_free=N_FREE, alpha=LEAKY, scale=None, extra=
                     e = add(e, att[side][t][b])
                 cnt[side][c][b] = e
                 u = bld.unit("h2", e, -1.0, "attack",
-                             f"{'own' if side == OWN else 'opp'} attacks<= {'PMRA'[c]} {b} >=2")
+                             f"{'own' if side == OWN else 'opp'} attacks<= {'PMRA'[c]} {b} >=2",
+                             {"kind": "count2", "side": side, "cls": c, "place": ("square", b)})
                 ind[side][c][b] = add(e, bld.ref(u), coefs=[1, -1])
 
     n1 = len(bld.units["h1"])
@@ -312,14 +325,16 @@ def construct(disable=(), seed=0, n_free=N_FREE, alpha=LEAKY, scale=None, extra=
             D = ind[side][CLS_ALL][b]
             for t in (P, N, B, R, Q):
                 e = add(X(side, t, b), ind[other][CLS_ALL][b], D, coefs=[1, 1, -1])
-                u = bld.unit("h3", e, -1.0, group, f"{sname} {NAMES[t]} {b} hangs")
+                u = bld.unit("h3", e, -1.0, group, f"{sname} {NAMES[t]} {b} hangs",
+                             {"kind": "hangs", "side": side, "piece": t, "place": ("square", b)})
                 out(u, gamma * VALUE[t], group)
                 lv = [l for l in LEVELS if l < VALUE[t] - 0.5]
                 for i, l in enumerate(lv):
                     nxt = lv[i + 1] if i + 1 < len(lv) else VALUE[t]
                     e = add(X(side, t, b), ind[other][i][b], D)
                     u = bld.unit("h3", e, -2.0, group,
-                                 f"{sname} {NAMES[t]} {b} attacked by <= {'PMR'[i]}, defended")
+                                 f"{sname} {NAMES[t]} {b} attacked by <= {'PMR'[i]}, defended",
+                                 {"kind": "cheaper", "side": side, "piece": t, "cls": i, "place": ("square", b)})
                     out(u, gamma * (nxt - l), group)
 
     # -------- Königszone (h3)
@@ -333,7 +348,8 @@ def construct(disable=(), seed=0, n_free=N_FREE, alpha=LEAKY, scale=None, extra=
                 if z is not None:
                     e = add(e, ind[other][CLS_ALL][z])
             u = bld.unit("h3", e, -10.0, "king_safety",
-                         f"{'own' if side == OWN else 'opp'} K {k} zone attacked")
+                         f"{'own' if side == OWN else 'opp'} K {k} zone attacked",
+                         {"kind": "zone", "side": side, "piece": K, "place": ("zone", k)})
             out(u, -0.1 if side == OWN else 0.05, "king_safety")
 
     # -------- Königsgefahr (h3, nur mit extra=("king_danger",)): gewichtete Angriffe auf die Königszone,
@@ -351,7 +367,8 @@ def construct(disable=(), seed=0, n_free=N_FREE, alpha=LEAKY, scale=None, extra=
                             e = add(e, att[other][t][z], coefs=[1, w])
                 for thr, slope in KD_STEPS:
                     u = bld.unit("h3", e, -KD_GATE - thr, "king_danger",
-                                 f"{'own' if side == OWN else 'opp'} K {k} danger >{thr}")
+                                 f"{'own' if side == OWN else 'opp'} K {k} danger >{thr}",
+                                 {"kind": "danger", "side": side, "piece": K, "place": ("zone", k)})
                     out(u, -slope if side == OWN else slope, "king_danger")
 
     n2 = len(bld.units["h2"])
