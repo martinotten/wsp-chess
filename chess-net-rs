@@ -1,6 +1,6 @@
 #!/bin/sh
-# Startet den Rust-Kern als UCI-Engine; baut ihn bei Bedarf.
-# Gewichte: weights/weights.bin. Fehler und Build-Ausgaben landen in logs/uci-rs.log.
+# Starts the Rust core as a UCI engine; builds it if needed.
+# Weights: weights/weights.bin. Errors and build output go to logs/uci-rs.log.
 DIR="$(cd "$(dirname "$0")" && pwd)"
 BIN="$DIR/target/release/wsp-chess"
 LOG="$DIR/logs/uci-rs.log"

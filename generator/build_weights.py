@@ -1,35 +1,35 @@
-"""Schach-Bewertungsnetz mit von Hand geschriebenen Gewichten.
+"""Chess evaluation network with hand-written weights.
 
-Architektur (jede Schicht sieht die Eingabe und alle früheren Schichten):
+Architecture (every layer sees the input and all earlier layers):
 
-    x  (768 Bits, Sicht des Spielers am Zug)
-    h1 = lrelu(W1 x + b1)                  Strahlen, Bauernstruktur, Königsphase
-    h2 = lrelu(W2 [x,h1] + b2)             Schwellen "mind. 2 Angreifer"
-    h3 = lrelu(W3 [x,h1,h2] + b3)          hängende/bedrohte Figuren, Königszone
-    s  = wo [x,h1,h2,h3] + bo              Bewertung in Bauerneinheiten
-    v  = tanh(s / 4)                        normierte Ausgabe in (-1, 1)
+    x  (768 bits, from the side to move's perspective)
+    h1 = lrelu(W1 x + b1)                  rays, pawn structure, king phase
+    h2 = lrelu(W2 [x,h1] + b2)             thresholds "at least 2 attackers"
+    h3 = lrelu(W3 [x,h1,h2] + b3)          hanging/threatened pieces, king zone
+    s  = wo [x,h1,h2,h3] + bo              evaluation in pawn units
+    v  = tanh(s / 4)                        normalized output in (-1, 1)
 
-Bausteine (Reihenfolge des Bauplans):
- 1. Material und Feldwerte: linear von x nach s.
- 2. Bauernstruktur (h1): Doppelbauer relu(sum Linie - 1), isoliert relu(x - sum Nachbarlinien),
-    Freibauer relu(x - sum gegnerische Bauern davor).
- 3. Angriffe (h1): Läufer/Turm/Dame auf a greift b an, wenn die Felder dazwischen leer sind:
-        relu(x[t,a] - sum_{s zwischen a und b} belegt(s))       (genau 0 oder 1)
-    Springer, König, Bauern und Nachbarfelder brauchen keine Einheit, ihre Angriffe sind
-    linear in x. Die Summe der Strahleinheiten ergibt die Mobilität.
-    Angriffszahl cnt(Seite, Klasse, Feld) ist linear in [x, h1]. Klassen kumulativ nach Wert:
-    <=Bauer, <=Leichtfigur, <=Turm, alle.
-    h2: relu(cnt - 1). Damit ist der Indikator "mind. ein Angreifer" = cnt - relu(cnt - 1).
- 4. h3, aus Indikatoren A (Gegner greift an) und D (eigene Seite deckt):
-        hängt         relu(x[t,b] + A_alle(b) - D(b) - 1)                Ausgang -0,2 Wert(t) eigene, +0,8 gegnerische
-        billiger bedroht relu(x[t,b] + A_<=l(b) + D(b) - 2)                 Verlust teleskopiert
-    so dass der Verlust insgesamt Wert(t) - Wert(billigster Angreifer) ist, wenn gedeckt (Faktor wie bei hängt).
-    A und D sind Indikatoren 0/1 ("mind. ein Angreifer"), keine Zahlen.
-    Königszone: relu(10 x[K,k] + sum_{z Nachbar von k} A(z) - 10) = Zahl angegriffener Felder.
+Building blocks (in construction order):
+ 1. Material and piece-square values: linear from x to s.
+ 2. Pawn structure (h1): doubled relu(sum file - 1), isolated relu(x - sum adjacent files),
+    passed relu(x - sum opposing pawns ahead).
+ 3. Attacks (h1): bishop/rook/queen on a attacks b if the squares in between are empty:
+        relu(x[t,a] - sum_{s between a and b} occupied(s))       (exactly 0 or 1)
+    Knights, kings, pawns and adjacent squares need no unit; their attacks are
+    linear in x. The sum of the ray units gives the mobility.
+    Attack count cnt(side, class, square) is linear in [x, h1]. Classes are cumulative by value:
+    <=pawn, <=minor piece, <=rook, all.
+    h2: relu(cnt - 1). The indicator "at least one attacker" is then cnt - relu(cnt - 1).
+ 4. h3, from indicators A (opponent attacks) and D (own side defends):
+        hangs             relu(x[t,b] + A_all(b) - D(b) - 1)                output -0.2 value(t) own, +0.8 opponent's
+        cheaper-threatened relu(x[t,b] + A_<=l(b) + D(b) - 2)               loss telescopes
+    so that the total loss is value(t) - value(cheapest attacker) when defended (factor as for hangs).
+    A and D are 0/1 indicators ("at least one attacker"), not counts.
+    King zone: relu(10 x[K,k] + sum_{z adjacent to k} A(z) - 10) = number of attacked squares.
 
-Lernfähigkeit: normierte Ausgabe, Leaky-ReLU, weiche Königsphase, je Schicht freie
-Einheiten mit kleinen zufälligen Eingangsgewichten und Ausgangsgewicht 0 (ändern die
-Bewertung anfangs nicht, bekommen aber Gradienten).
+Trainability: normalized output, leaky ReLU, soft king phase, free units in every layer
+with small random input weights and output weight 0 (they do not change the
+evaluation initially, but they receive gradients).
 """
 import numpy as np
 
@@ -38,15 +38,15 @@ from constants import xi, P, N, B, R, Q, K, OWN, OPP, NAMES
 LEAKY = 0.01
 SCALE = 4.0                       # v = tanh(s / SCALE)
 VALUE = [1.0, 3.2, 3.3, 5.0, 9.0, 0.0]
-LEVELS = [1.0, 3.0, 5.0]           # Angreiferklassen <=Bauer, <=Leichtfigur, <=Turm
+LEVELS = [1.0, 3.0, 5.0]           # attacker classes <=pawn, <=minor piece, <=rook
 CLS_ALL = 3
 N_FREE = 64
 GROUPS = ["material", "pst", "pawns", "mobility", "threat_opp", "threat_own", "king_safety", "king_eg",
           "king_danger", "free"]
-# Königsgefahr: Gewicht je Angriff eines Figurentyps auf ein Feld der Königszone; Schwellen und Zusatzsteigung
-KD_WEIGHT = {N: 2.0, B: 2.0, R: 3.0, Q: 4.0}      # (Bauern- und Königsangriffe zählen nicht)
-KD_STEPS = [(6, 0.05), (12, 0.10), (18, 0.15)]    # Wert > Schwelle: + Steigung (Bauern je Punkt)
-KD_GATE = 200.0                                   # König auf k schaltet die Einheit frei
+# King danger: weight per attack of a piece type on a king-zone square; thresholds and additional slope
+KD_WEIGHT = {N: 2.0, B: 2.0, R: 3.0, Q: 4.0}      # (pawn and king attacks do not count)
+KD_STEPS = [(6, 0.05), (12, 0.10), (18, 0.15)]    # value > threshold: + slope (pawns per point)
+KD_GATE = 200.0                                   # king on k enables the unit
 
 DIRS = {B: [(1, 1), (1, -1), (-1, 1), (-1, -1)],
         R: [(1, 0), (-1, 0), (0, 1), (0, -1)]}
@@ -72,7 +72,7 @@ def mirror(s):
     return s ^ 56
 
 
-# ---------------------------------------------------------------- Feldwerte (eigene Sicht)
+# ---------------------------------------------------------------- piece-square values (own perspective)
 MOB = {B: 0.04, R: 0.03, Q: 0.015}
 
 
@@ -90,7 +90,7 @@ def pst_table():
         T[R, s] = 0.2 if r == 6 else 0.0
         T[Q, s] = [0.05, 0.03, 0.0, -0.05][ring(s)]
         T[K, s] = king_mg(s)
-        # Angriffe auf Nachbarfelder sind linear in x: gehören zur Mobilität der Läufer/Türme/Damen
+        # attacks on adjacent squares are linear in x: they belong to bishop/rook/queen mobility
     return T
 
 
@@ -107,27 +107,27 @@ def king_eg(s):
     return [0.3, 0.15, 0.0, -0.15][ring(s)]
 
 
-# ---------------------------------------------------------------- Bauhelfer
+# ---------------------------------------------------------------- construction helper
 class Builder:
-    """Sammelt Einheiten als lineare Ausdrücke über frühere Schichten.
+    """Collects units as linear expressions over earlier layers.
 
-    Leck-Kompensation: lrelu(z) = (1-a) relu(z) + a z, und z ist linear in früheren Schichten.
-    Wer eine Einheit u benutzt, bekommt daher den Ausdruck
+    Leak compensation: lrelu(z) = (1-a) relu(z) + a z, and z is linear in earlier layers.
+    A consumer of unit u therefore gets the expression
         E(u) = (h_u - a * z_u) / (1 - a)
-    der exakt relu(z_u) ist, für jedes a. Die handgeschriebene Bewertung hängt so nicht von a ab.
+    which equals relu(z_u) exactly, for any a. The hand-written evaluation thus does not depend on a.
     """
 
     def __init__(self, alpha):
         self.alpha = alpha
         self.units = {"h1": [], "h2": [], "h3": []}
         self.exact = {}
-        self.out = {}             # Schlüssel -> Liste (Gewicht, Gruppe)
-        self.info = {}            # Schlüssel -> Art und Ort (Sicht des Ziehenden), siehe unit()
+        self.out = {}             # key -> list of (weight, group)
+        self.info = {}            # key -> kind and location (side to move's perspective), see unit()
 
     def unit(self, layer, expr, bias, group, name, info):
-        """info: Art und Ort des Musters für Erklärungen, Felder in Netzkoordinaten (eigene Seite unten):
+        """info: kind and location of the pattern for explanations, squares in net coordinates (own side at the bottom):
         {"kind": ..., "side": OWN/OPP, "piece": t?, "cls": c?, "place": ("ray", a, b) | ("square", s) |
-        ("file", f) | ("zone", k)}. Ändert keine Gewichte."""
+        ("file", f) | ("zone", k)}. Does not change any weights."""
         expr = dict(expr)
         bias += expr.pop(("const", 0), 0.0)
         self.units[layer].append((expr, bias, group, name))
@@ -170,10 +170,10 @@ def build(disable=(), seed=0, n_free=N_FREE, alpha=LEAKY, scale=None, extra=()):
 
 
 def construct(disable=(), seed=0, n_free=N_FREE, alpha=LEAKY, scale=None, extra=()):
-    """Baut die Einheiten auf; der Builder hält je Ausgangsbeitrag Gewicht und Gruppe (für Zerlegungen).
+    """Builds the units; the builder keeps weight and group per output contribution (for decompositions).
 
-    scale: {Gruppe: Faktor} multipliziert die Ausgangsgewichte dieser Gruppen (Experimente).
-    extra: zusätzliche, standardmäßig abgeschaltete Bausteine, z. B. ("king_danger",).
+    scale: {group: factor} multiplies the output weights of these groups (experiments).
+    extra: additional building blocks that are disabled by default, e.g. ("king_danger",).
     """
     disable = set(disable)
     scale = scale or {}
@@ -185,7 +185,7 @@ def construct(disable=(), seed=0, n_free=N_FREE, alpha=LEAKY, scale=None, extra=
         if group not in disable:
             bld.to_out(bld.ref(key), w * scale.get(group, 1.0), group)
 
-    # -------- 1. Material und Feldwerte
+    # -------- 1. Material and piece-square values
     T = pst_table()
     for side in (OWN, OPP):
         for t in range(6):
@@ -194,8 +194,8 @@ def construct(disable=(), seed=0, n_free=N_FREE, alpha=LEAKY, scale=None, extra=
                 out(("x", xi(side, t, s)), sign[side] * VALUE[t], "material")
                 out(("x", xi(side, t, s)), sign[side] * T[t, own_s], "pst")
 
-    # -------- 3a. Strahleinheiten (h1) und Angriffszahlen
-    # attackers[side][t][b] = Ausdruck (linear in x, h1) = Zahl der Figuren vom Typ t, die b angreifen
+    # -------- 3a. Ray units (h1) and attack counts
+    # att[side][t][b] = expression (linear in x, h1) = number of pieces of type t attacking b
     att = {side: {t: {b: {} for b in range(64)} for t in range(6)} for side in (OWN, OPP)}
     for side in (OWN, OPP):
         fwd = 1 if side == OWN else -1
@@ -230,7 +230,7 @@ def construct(disable=(), seed=0, n_free=N_FREE, alpha=LEAKY, scale=None, extra=
                         between.append(b)
                         k += 1
 
-    # -------- 2. Bauernstruktur (h1)
+    # -------- 2. Pawn structure (h1)
     PASSED = [0, 0.05, 0.1, 0.2, 0.35, 0.6, 1.0, 0]
     for side in (OWN, OPP):
         other = OPP if side == OWN else OWN
@@ -263,7 +263,7 @@ def construct(disable=(), seed=0, n_free=N_FREE, alpha=LEAKY, scale=None, extra=
             rel = r if side == OWN else 7 - r
             out(u, PASSED[rel] * sign[side], "pawns")
 
-    # -------- Königsphase (h1): weiche Schwelle über gegnerisches Figurenmaterial
+    # -------- King phase (h1): soft threshold on the opponent's piece material
     PHASE_W = {N: 0.15, B: 0.15, R: 0.25, Q: 0.5}
     for side in (OWN, OPP):
         other = OPP if side == OWN else OWN
@@ -277,7 +277,7 @@ def construct(disable=(), seed=0, n_free=N_FREE, alpha=LEAKY, scale=None, extra=
                          {"kind": "king_phase", "side": side, "piece": K, "place": ("square", k)})
             out(u, sign[side] * (king_eg(own_k) - king_mg(own_k)), "king_eg")
 
-    # -------- Bauernschild (h1)
+    # -------- Pawn shield (h1)
     for side in (OWN, OPP):
         back = 0 if side == OWN else 7
         fwd = 1 if side == OWN else -1
@@ -295,7 +295,7 @@ def construct(disable=(), seed=0, n_free=N_FREE, alpha=LEAKY, scale=None, extra=
 
     free_units(bld, "h1", 768, 0.1, n_free, rng)
 
-    # -------- 3b. Angriffszahlen je Klasse, Schwelle "mind. 2" (h2)
+    # -------- 3b. Attack counts per class, threshold "at least 2" (h2)
     order = [[P], [P, N, B], [P, N, B, R], [P, N, B, R, Q, K]]
     cnt = {side: {c: {} for c in range(4)} for side in (OWN, OPP)}
     ind = {side: {c: {} for c in range(4)} for side in (OWN, OPP)}
@@ -314,11 +314,11 @@ def construct(disable=(), seed=0, n_free=N_FREE, alpha=LEAKY, scale=None, extra=
     n1 = len(bld.units["h1"])
     free_units(bld, "h2", 768 + n1, 0.05, n_free, rng)
 
-    # -------- 4. Hängende und billiger bedrohte Figuren (h3)
+    # -------- 4. Hanging pieces and pieces threatened by cheaper attackers (h3)
     for side in (OWN, OPP):
         other = OPP if side == OWN else OWN
         group = "threat_own" if side == OWN else "threat_opp"
-        gamma = -0.2 if side == OWN else 0.8      # am Zug: gegnerische Verluste sind Gewinne
+        gamma = -0.2 if side == OWN else 0.8      # side to move: opponent's losses are gains
         sname = "own" if side == OWN else "opp"
         for b in range(64):
             D = ind[side][CLS_ALL][b]
@@ -336,7 +336,7 @@ def construct(disable=(), seed=0, n_free=N_FREE, alpha=LEAKY, scale=None, extra=
                                  {"kind": "cheaper", "side": side, "piece": t, "cls": i, "place": ("square", b)})
                     out(u, gamma * (nxt - l), group)
 
-    # -------- Königszone (h3)
+    # -------- King zone (h3)
     for side in (OWN, OPP):
         other = OPP if side == OWN else OWN
         for k in range(64):
@@ -351,8 +351,8 @@ def construct(disable=(), seed=0, n_free=N_FREE, alpha=LEAKY, scale=None, extra=
                          {"kind": "zone", "side": side, "piece": K, "place": ("zone", k)})
             out(u, -0.1 if side == OWN else 0.05, "king_safety")
 
-    # -------- Königsgefahr (h3, nur mit extra=("king_danger",)): gewichtete Angriffe auf die Königszone,
-    # stückweise linear mit wachsender Steigung (Näherung an Stockfishs quadratische king danger).
+    # -------- King danger (h3, only with extra=("king_danger",)): weighted attacks on the king zone,
+    # piecewise linear with increasing slope (approximation of Stockfish's quadratic king danger).
     if "king_danger" in extra:
         for side in (OWN, OPP):
             other = OPP if side == OWN else OWN
@@ -376,7 +376,7 @@ def construct(disable=(), seed=0, n_free=N_FREE, alpha=LEAKY, scale=None, extra=
 
 
 def free_units(bld, layer, fan_in, sigma, n, rng):
-    """Freie Einheiten: zufällige Eingänge, Ausgang 0. Ihr Eingang wird in assemble gefüllt."""
+    """Free units: random inputs, output 0. Their input weights are filled in by assemble."""
     for i in range(n):
         bld.units[layer].append(("FREE", (fan_in, sigma, rng.integers(1 << 31)), "free", f"{layer} free {i}"))
 
