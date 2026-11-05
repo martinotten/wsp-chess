@@ -2,6 +2,7 @@
 name = "wsp-chess"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 description = "UCI engine that uses a hand-written chess network (Weight-Space Programming) as its evaluation"
 
 [dependencies]
