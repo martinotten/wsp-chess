@@ -1,5 +1,6 @@
 //! Wurzel: iterative Vertiefung mit Aspiration-Fenstern, Rückfallzug und Hauptvariante.
 
+use super::alphabeta::FIFTY_MOVE_PLIES;
 use super::node::{Node, Window};
 use super::{hash, move_code, Feature, Info, Limits, Searcher, Team, INF, MATE, MATE_BOUND, MAX_PLY};
 use crate::board::{Move, Position};
@@ -227,15 +228,22 @@ impl Searcher {
         }
     }
 
-    /// Hauptvariante aus der Transpositionstabelle, höchstens `max_len` Züge, ohne Wiederholungen.
+    /// Hauptvariante aus der Transpositionstabelle, höchstens `max_len` Züge. Sie endet vor einer
+    /// Stellung, die in Partie oder Variante schon vorkam, und dort, wo die Partie nach der 50-Züge-Regel
+    /// oder mangels Material remis wäre.
     fn pv(&self, pos: &Position, first: Move, max_len: usize) -> Vec<Move> {
         let mut line = vec![first];
         let mut current = pos.clone();
         current.play_unchecked(first);
-        let mut seen = vec![hash(pos)];
+        // Partiehistorie und Wurzel (self.path nach der Iteration): Wiederholung auch gegen frühere Züge
+        let mut seen = self.path.clone();
+        seen.push(hash(pos));
         while line.len() < max_len {
             let key = hash(&current);
-            if seen.contains(&key) {
+            if seen.contains(&key)
+                || current.halfmoves() >= FIFTY_MOVE_PLIES
+                || current.is_insufficient_material()
+            {
                 break;
             }
             seen.push(key);

@@ -98,6 +98,7 @@ fn fifty_move_rule_makes_the_search_a_draw() {
     let position = pos("8/8/8/4k3/8/8/R7/4K3 w - - 99 80");
     let (_, info) = search_depth(&mut engine, &position, &[], 3);
     assert_eq!(info.score, 0);
+    assert_eq!(info.pv.len(), 1, "Hauptvariante endet an der 50-Züge-Grenze");
     let fresh = pos("8/8/8/4k3/8/8/R7/4K3 w - - 0 80");
     let (_, fresh_info) = search_depth(&mut engine, &fresh, &[], 3);
     assert!(fresh_info.score > 300, "Turm mehr: {}", fresh_info.score);
@@ -134,6 +135,7 @@ fn repetition_against_game_history_is_a_draw() {
     let game: Vec<u64> = earlier.iter().flat_map(|&key| [1, key]).collect();
     let (_, info) = search_depth(&mut engine, &position, &game, 3);
     assert_eq!(info.score, 0);
+    assert_eq!(info.pv.len(), 1, "Hauptvariante endet vor der Wiederholung");
 }
 
 #[test]

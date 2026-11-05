@@ -7,7 +7,7 @@ use crate::board::{Move, MoveList, Piece, Position};
 use crate::tt::{Bound, Entry};
 
 /// Halbzüge ohne Schlag oder Bauernzug bis zum Remis (50-Züge-Regel).
-const FIFTY_MOVE_PLIES: u32 = 100;
+pub(super) const FIFTY_MOVE_PLIES: u32 = 100;
 
 /// Nullzug: Mindesttiefe, Reduktion und Tiefe, ab der um einen Halbzug mehr reduziert wird.
 const NULL_MIN_DEPTH: i32 = 3;
