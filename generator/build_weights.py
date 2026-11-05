@@ -33,8 +33,7 @@ Bewertung anfangs nicht, bekommen aber Gradienten).
 """
 import numpy as np
 
-import paths
-from features import xi, P, N, B, R, Q, K, OWN, OPP, NAMES
+from constants import xi, P, N, B, R, Q, K, OWN, OPP, NAMES
 
 LEAKY = 0.01
 SCALE = 4.0                       # v = tanh(s / SCALE)
@@ -412,24 +411,11 @@ def assemble(bld):
     return params, meta
 
 
-SEARCH_DISABLE = ("threat_opp", "threat_own")   # Variante für die Suche: nur bei fester Tiefe stärker (README, "Mit Suche")
-
 if __name__ == "__main__":
-    import sys, time, json
-    t0 = time.time()
-    if sys.argv[1:] == ["search"]:          # Gewichte für die Engine mit Suche
-        params, meta = build(disable=SEARCH_DISABLE)
-        np.savez_compressed(paths.weights("weights_search.npz"), **params)
-        print(f"weights_search.npz ohne {SEARCH_DISABLE}, {time.time() - t0:.1f} s")
-        sys.exit()
-    params, meta = build()
-    np.savez_compressed(paths.weights("weights.npz"), **params)
-    with open(paths.weights("units.json"), "w") as fh:
-        json.dump(meta, fh)
+    from collections import Counter
+    params, meta = build(alpha=0.0, n_free=0)
+    for layer in ("h1", "h2", "h3"):
+        print(layer, len(meta[layer]), dict(Counter(g for g, _ in meta[layer])))
     total = sum(v.size for v in params.values())
-    nz = sum(int((v != 0).sum()) for k, v in params.items())
-    print(f"{time.time() - t0:.1f} s")
-    for l in ("h1", "h2", "h3"):
-        from collections import Counter
-        print(l, len(meta[l]), dict(Counter(g for g, _ in meta[l])))
-    print(f"Parameter: {total:,}, davon != 0: {nz:,}")
+    nz = sum(int((v != 0).sum()) for v in params.values())
+    print(f"parameters: {total:,}, non-zero: {nz:,}")
